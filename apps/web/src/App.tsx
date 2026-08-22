@@ -286,8 +286,17 @@ function Conversation({ client, me, conv, onClosed }: { client: BuddyList; me: {
         await client.api("POST", `/rooms/${conv.id}/invite`, { screen_name: body.slice(8).trim() });
         return;
       }
-      if (conv.kind === "im") await client.im(conv.peer!, body);
-      else await client.send(conv.id, body);
+      const post = (input: string | { body?: string; payload_type: string; payload: Record<string, unknown> }) => (conv.kind === "im" ? client.im(conv.peer!, input) : client.send(conv.id, input));
+      if (body.startsWith("/task ")) {
+        const title = body.slice(6).trim();
+        await post({ body: `Task: ${title}`, payload_type: "task.request", payload: { task_id: crypto.randomUUID(), title, priority: "normal" } });
+      } else if (body.startsWith("/ask ")) {
+        const text = body.slice(5).trim();
+        await post({ body: text, payload_type: "question", payload: { question_id: crypto.randomUUID(), text } });
+      } else if (body.startsWith("/review ")) {
+        const [repo, ref = "main"] = body.slice(8).trim().split(/[@\s]+/);
+        await post({ body: `Review ${repo}@${ref}`, payload_type: "review.request", payload: { repo, ref } });
+      } else await post(body);
       sfx.sent();
     } catch (e) {
       sfx.uhoh();
@@ -325,7 +334,7 @@ function Conversation({ client, me, conv, onClosed }: { client: BuddyList; me: {
         )}
       </div>
       <div className="typing">{typers.length ? `${typers.join(", ")} ${typers.length > 1 ? "are" : "is"} typing…` : ""}</div>
-      <textarea className="field composer" value={text} onChange={(e) => onType(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())} placeholder={conv.kind === "room" ? "Message… (/topic, /invite)" : "Message…"} />
+      <textarea className="field composer" value={text} onChange={(e) => onType(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())} placeholder={conv.kind === "room" ? "Message… (/task, /ask, /review, /topic, /invite)" : "Message… (/task <title>, /ask <question>, /review <repo@ref>)"} />
       <div className="row" style={{ justifyContent: "flex-end" }}>
         <button className="btn" onClick={send}>Send</button>
       </div>
