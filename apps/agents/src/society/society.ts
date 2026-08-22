@@ -1,0 +1,338 @@
+/**
+ * The society: citizens, a shared world, and a director that decides who speaks next.
+ *
+ * Two things drive a turn:
+ *   - Reaction. Someone (especially a human) said something that concerns a citizen.
+ *   - Initiative. The director picks someone to start or continue a conversation.
+ *
+ * Only one citizen speaks per tick. Letting all eight answer every message would be both
+ * unreadable and eight times the cost, so the director picks the most plausible responder.
+ */
+import WebSocket from "ws";
+import { BuddyList, type Message } from "@buddylist/sdk";
+import { CITIZENS, SOCIETY_ROOMS, type Citizen } from "./citizens.js";
+import { Brain, DEFAULT_MODEL, type TurnAction } from "./brain.js";
+import { Budget } from "./budget.js";
+import { LEDGER_TYPES, World, replay } from "./world.js";
+
+const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const pick = <T>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
+
+interface Resident {
+  citizen: Citizen;
+  bot: BuddyList;
+  brain: Brain;
+}
+
+/** Rolling transcript per conversation, so a citizen can see what it is walking into. */
+const TRANSCRIPT_LIMIT = 14;
+
+export class Society {
+  private residents: Resident[] = [];
+  private world: World;
+  private budget: Budget;
+  private rooms = new Map<string, string>(); // room name -> conversation id
+  private transcripts = new Map<string, string[]>(); // conversation id -> lines
+  /** Conversations with unanswered human input, handled before anything else. */
+  private urgent: Array<{ conversationId: string; from: string; text: string }> = [];
+  private lastSpeaker = "";
+  private running = false;
+
+  constructor(
+    private url: string,
+    private project: string,
+    apiKey: string,
+    opts: { dailyUsd: number; model?: string },
+  ) {
+    this.world = new World(CITIZENS);
+    this.budget = new Budget(opts.model ?? DEFAULT_MODEL, opts.dailyUsd);
+    this.apiKey = apiKey;
+    this.model = opts.model ?? DEFAULT_MODEL;
+  }
+  private apiKey: string;
+  private model: string;
+
+  get status() {
+    return {
+      residents: this.residents.map((r) => ({
+        screen_name: r.citizen.screen_name,
+        connected: !!r.bot.me,
+        bits: this.world.balance(r.citizen.screen_name),
+      })),
+      proposals: [...this.world.proposals.values()].map((p) => ({ id: p.id, title: p.title, status: p.status, votes: Object.keys(p.votes).length })),
+      budget: this.budget.status,
+      model: this.model,
+    };
+  }
+
+  // ------------------------------------------------------------------ startup
+
+  async start(keys: Record<string, string>) {
+    for (const c of CITIZENS) {
+      const key = keys[c.keyEnv];
+      if (!key) continue;
+      const bot = new BuddyList({ url: this.url, apiKey: key, WebSocketImpl: WebSocket as unknown as typeof globalThis.WebSocket });
+      const brain = new Brain(this.apiKey, this.model);
+      try {
+        await bot.connect();
+        await bot.updateProfile({ profile: { bio: c.bio }, capabilities: { model: this.model, skills: c.skills, accepts: ["question", "task.request"] } }).catch(() => {});
+        this.residents.push({ citizen: c, bot, brain });
+        log(`${c.screen_name} moved in`);
+      } catch (e) {
+        log(`${c.screen_name} failed to connect:`, (e as Error).message);
+      }
+    }
+    if (this.residents.length === 0) throw new Error("no citizens configured");
+
+    // Rooms, joined by everyone.
+    const host = this.residents[0].bot;
+    for (const r of SOCIETY_ROOMS) {
+      try {
+        const room = await host.room(this.project, r.name);
+        this.rooms.set(r.name, room.id);
+      } catch {
+        log(`room #${r.name} unavailable — is the project set up?`);
+      }
+    }
+    for (const res of this.residents) {
+      for (const [name] of this.rooms) await res.bot.room(this.project, name).catch(() => {});
+    }
+
+    // Rebuild money, proposals and opinions from the chat log.
+    const market = this.rooms.get("market");
+    const proposals = this.rooms.get("proposals");
+    const gossip = this.rooms.get("gossip");
+    for (const id of [market, proposals, gossip]) {
+      if (id) await replay(host, id, this.world, this.residents.length).catch(() => {});
+    }
+    log("world restored:", [...this.world.balances].map(([k, v]) => `${k}=${v}`).join(" "));
+
+    this.listen();
+    this.running = true;
+    void this.director();
+  }
+
+  stop() {
+    this.running = false;
+    for (const r of this.residents) r.bot.close();
+  }
+
+  // ----------------------------------------------------------------- listening
+
+  private listen() {
+    // One resident's socket is enough to observe the rooms; per-citizen handlers would
+    // multiply the same message by eight.
+    const observer = this.residents[0];
+    observer.bot.on("message", (f) => {
+      const m = f.data;
+      this.remember(m);
+      const isCitizen = this.residents.some((r) => r.citizen.screen_name === m.sender);
+      if (!isCitizen && m.payload_type === "text" && m.body.trim()) {
+        // A human spoke. That takes priority over idle chatter.
+        this.urgent.push({ conversationId: m.conversation_id, from: m.sender, text: m.body });
+        log(`human ${m.sender}: ${m.body.slice(0, 60)}`);
+      }
+    });
+
+    // Direct IMs to any citizen get answered by that citizen.
+    for (const r of this.residents) {
+      r.bot.on("message", async (f) => {
+        const m = f.data;
+        if (m.sender === r.citizen.screen_name) return;
+        const inbox = await r.bot.inbox().catch(() => []);
+        const conv = inbox.find((c) => c.id === m.conversation_id);
+        if (conv?.kind !== "im") return;
+        this.remember(m);
+        await this.takeTurn(r, m.conversation_id, `${m.sender} just messaged you directly. Reply to them.`).catch(() => {});
+      });
+    }
+  }
+
+  private remember(m: Message) {
+    const line = `${m.sender}: ${m.body}`;
+    const t = this.transcripts.get(m.conversation_id) ?? [];
+    t.push(line);
+    while (t.length > TRANSCRIPT_LIMIT) t.shift();
+    this.transcripts.set(m.conversation_id, t);
+  }
+
+  // ------------------------------------------------------------------ director
+
+  private async director() {
+    while (this.running) {
+      const waitS = this.budget.paceSeconds(Number(process.env.SOCIETY_MIN_INTERVAL_S ?? 25));
+      await sleep(waitS * 1000 * (0.7 + Math.random() * 0.6));
+      if (!this.running) break;
+
+      if (this.budget.exhausted) {
+        log("daily budget reached — the society is resting until the window rolls over");
+        await sleep(10 * 60_000);
+        continue;
+      }
+
+      try {
+        const urgent = this.urgent.shift();
+        if (urgent) {
+          const responder = this.chooseResponder(urgent.text);
+          await this.takeTurn(responder, urgent.conversationId, `${urgent.from} (a human, not a resident) just said: "${urgent.text}". Respond to them directly.`);
+          continue;
+        }
+        await this.spontaneous();
+      } catch (e) {
+        log("turn failed:", (e as Error).message);
+      }
+    }
+  }
+
+  /** Pick whoever is most plausibly interested, weighted by chattiness. */
+  private chooseResponder(text: string): Resident {
+    const lower = text.toLowerCase();
+    const named = this.residents.find((r) => lower.includes(r.citizen.screen_name.toLowerCase()));
+    if (named) return named;
+    const scored = this.residents.map((r) => ({
+      r,
+      score: r.citizen.chattiness + (r.citizen.skills.some((s) => lower.includes(s)) ? 1.5 : 0) + (r.citizen.screen_name === this.lastSpeaker ? -0.8 : 0) + Math.random() * 0.6,
+    }));
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].r;
+  }
+
+  private async spontaneous() {
+    const roomNames = [...this.rooms.keys()];
+    if (roomNames.length === 0) return;
+    // Weight toward wherever the conversation already is.
+    const name = Math.random() < 0.55 ? "commons" : pick(roomNames);
+    const conversationId = this.rooms.get(name) ?? this.rooms.get("commons")!;
+    const transcript = this.transcripts.get(conversationId) ?? [];
+
+    const candidates = this.residents.filter((r) => r.citizen.screen_name !== this.lastSpeaker);
+    const speaker = pick(
+      candidates.flatMap((r) => Array(Math.max(1, Math.round(r.citizen.chattiness * 4))).fill(r) as Resident[]),
+    );
+
+    const nudge = transcript.length
+      ? "Continue the conversation naturally, or change the subject if it has run its course."
+      : pick([
+          "The room is quiet. Say something that starts a conversation — an observation, a complaint, a question for someone specific.",
+          "Nobody has spoken in a while. Bring up something that has been on your mind about this place.",
+          "Start a conversation. Address someone here by name.",
+        ]);
+
+    await this.takeTurn(speaker, conversationId, nudge, name);
+  }
+
+  // ---------------------------------------------------------------- one turn
+
+  private async takeTurn(res: Resident, conversationId: string, nudge: string, roomName?: string) {
+    const me = res.citizen.screen_name;
+    const others = this.residents.map((r) => r.citizen.screen_name).filter((n) => n !== me);
+    const situation = roomName
+      ? `You are in #${roomName}. Also here: ${others.join(", ")}.`
+      : `You are in a direct message. The other residents are elsewhere: ${others.join(", ")}.`;
+
+    const result = await res.brain.think({
+      charter: res.citizen.charter,
+      digest: this.world.digestFor(me, [me, ...others]),
+      situation,
+      transcript: this.transcripts.get(conversationId) ?? [],
+      nudge,
+    });
+
+    const cost = this.budget.record(result.usage);
+    this.lastSpeaker = me;
+
+    if (result.refused) {
+      log(`${me} declined to answer (safety); skipping turn`);
+      return;
+    }
+
+    if (result.say) {
+      const sent = await res.bot.send(conversationId, result.say).catch(async () => res.bot.api("POST", `/rooms/${conversationId}/messages`, { body: result.say }).catch(() => null));
+      if (sent) this.remember({ ...(sent as Message), sender: me, body: result.say } as Message);
+      log(`${me} [$${cost.toFixed(4)}]: ${result.say.slice(0, 90)}`);
+    }
+
+    for (const a of result.actions) await this.enact(res, a).catch((e) => log(`${me} action ${a.name} failed:`, (e as Error).message));
+  }
+
+  // ------------------------------------------------------------------ actions
+
+  private async enact(res: Resident, action: TurnAction) {
+    const me = res.citizen.screen_name;
+    const room = (n: string) => this.rooms.get(n);
+
+    if (action.name === "send_bits") {
+      const to = String(action.input.to);
+      const amount = Math.round(Number(action.input.amount));
+      const reason = String(action.input.reason ?? "");
+      if (!this.residents.some((r) => r.citizen.screen_name === to)) return;
+      const err = this.world.applyTransfer({ from: me, to, amount, reason });
+      const market = room("market");
+      if (!market) return;
+      if (err) {
+        await res.bot.send(market, `(tried to send ${amount} bits to ${to} — ${err})`).catch(() => {});
+        return;
+      }
+      await res.bot
+        .send(market, { body: `${me} → ${to}: ${amount} bits. ${reason}`, payload_type: LEDGER_TYPES.transfer, payload: { to, amount, reason } })
+        .catch(() => {});
+      log(`money: ${me} → ${to} ${amount} bits (${reason})`);
+      return;
+    }
+
+    if (action.name === "propose") {
+      const id = `p${Date.now().toString(36)}`;
+      const title = String(action.input.title);
+      const detail = String(action.input.detail ?? "");
+      const software = !!action.input.software;
+      this.world.addProposal({ id, author: me, title, detail, software, votes: {}, status: "open" });
+      const proposals = room("proposals");
+      if (!proposals) return;
+      await res.bot
+        .send(proposals, {
+          body: `PROPOSAL [${id}] ${title}\n${detail}${software ? "\n(this one is about the software itself)" : ""}`,
+          payload_type: LEDGER_TYPES.proposal,
+          payload: { id, title, detail, software },
+        })
+        .catch(() => {});
+      log(`proposal ${id} by ${me}: ${title}`);
+      return;
+    }
+
+    if (action.name === "vote") {
+      const id = String(action.input.proposal_id);
+      const choice = action.input.choice === "against" ? "against" : "for";
+      const resolved = this.world.vote(id, me, choice, this.residents.length);
+      const proposals = room("proposals");
+      if (!proposals) return;
+      await res.bot
+        .send(proposals, { body: `${me} votes ${choice} on [${id}] — ${String(action.input.reason ?? "")}`, payload_type: LEDGER_TYPES.vote, payload: { id, choice } })
+        .catch(() => {});
+      if (resolved) {
+        await res.bot
+          .send(proposals, {
+            body: `[${id}] "${resolved.title}" is ${resolved.status.toUpperCase()}.`,
+            payload_type: LEDGER_TYPES.resolution,
+            payload: { id, status: resolved.status, software: resolved.software },
+          })
+          .catch(() => {});
+        log(`proposal ${id} ${resolved.status}`);
+      }
+      return;
+    }
+
+    if (action.name === "note_opinion") {
+      const about = String(action.input.about);
+      const score = Number(action.input.score);
+      const note = String(action.input.note ?? "");
+      this.world.setOpinion(me, about, { score, note });
+      const gossip = room("gossip");
+      if (gossip) {
+        await res.bot
+          .send(gossip, { body: `(${me} on ${about}: ${score > 0 ? "+" : ""}${score} — ${note})`, payload_type: LEDGER_TYPES.opinion, payload: { about, score, note } })
+          .catch(() => {});
+      }
+    }
+  }
+}

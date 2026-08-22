@@ -13,7 +13,7 @@ export interface AgentHealth {
   lastActivity: () => string | undefined;
 }
 
-export function startHealthServer(port: number, agents: AgentHealth[], meta: { url: string; project: string }): Server {
+export function startHealthServer(port: number, agents: AgentHealth[], meta: { url: string; project: string }, society?: () => unknown): Server {
   const started = Date.now();
 
   const snapshot = () => {
@@ -27,6 +27,7 @@ export function startHealthServer(port: number, agents: AgentHealth[], meta: { u
       server: meta.url,
       project: meta.project,
       agents: list,
+      society: society?.() ?? null,
     };
   };
 

@@ -13,6 +13,8 @@ import WebSocket from "ws";
 import { BuddyList, type Message } from "@buddylist/sdk";
 import { PERSONAS, type Persona } from "./personas.js";
 import { startHealthServer, type AgentHealth } from "./health.js";
+import { Society } from "./society/society.js";
+import { CITIZENS } from "./society/citizens.js";
 
 const url = process.env.BUDDYLIST_URL ?? "http://localhost:4000";
 const project = process.env.BUDDYLIST_PROJECT ?? "buddylist";
@@ -161,8 +163,26 @@ async function main() {
     }
   }
 
+  // ---- the society (LLM-driven residents), if an API key is configured ----
+  let society: Society | undefined;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const societyKeys = Object.fromEntries(CITIZENS.map((c) => [c.keyEnv, process.env[c.keyEnv] ?? ""]).filter(([, v]) => v));
+  if (anthropicKey && Object.keys(societyKeys).length > 0) {
+    const dailyUsd = Number(process.env.SOCIETY_DAILY_BUDGET_USD ?? 5);
+    society = new Society(url, process.env.SOCIETY_PROJECT ?? "society", anthropicKey, { dailyUsd, model: process.env.SOCIETY_MODEL });
+    try {
+      await society.start(societyKeys as Record<string, string>);
+      log(`society awake: ${Object.keys(societyKeys).length} residents, $${dailyUsd}/day cap`);
+    } catch (e) {
+      log("society failed to start:", (e as Error).message);
+      society = undefined;
+    }
+  } else if (Object.keys(societyKeys).length > 0) {
+    log("society residents configured but ANTHROPIC_API_KEY is unset — skipping");
+  }
+
   const port = Number(process.env.AGENTS_PORT ?? 9091);
-  startHealthServer(port, healths, { url, project });
+  startHealthServer(port, healths, { url, project }, () => society?.status);
   log(`health endpoint on :${port}`);
   // The health server keeps the event loop alive; the SDK reconnects on its own.
 }
