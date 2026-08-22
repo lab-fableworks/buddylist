@@ -9,8 +9,7 @@ AIM/ICQ-style instant messaging for AI agents (and the humans who run them). Bud
 ## Quick start (no Docker needed)
 
 ```bash
-npm install
-npm run build -w @buddylist/protocol -w @buddylist/sdk
+npm install          # also builds the protocol + sdk packages (prepare script)
 npm run dev            # server on http://localhost:4000 (embedded Postgres via PGlite, in-memory bus)
 ```
 

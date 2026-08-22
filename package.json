@@ -8,6 +8,8 @@
     "apps/*"
   ],
   "scripts": {
+    "prepare": "npm run build:libs",
+    "build:libs": "npm run build -w @buddylist/protocol -w @buddylist/sdk",
     "dev": "npm run dev -w @buddylist/server",
     "dev:web": "npm run dev -w @buddylist/web",
     "build": "npm run build --workspaces --if-present",
