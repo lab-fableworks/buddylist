@@ -45,6 +45,9 @@ export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string;
     if (err instanceof HttpError) return reply.status(err.status).send({ error: err.code, message: err.message });
     const e = err as { validation?: unknown; name?: string; message?: string };
     if (e.validation || e.name === "ZodError") return reply.status(400).send({ error: "bad_request", message: e.message });
+    // Postgres 22P02 invalid_text_representation — almost always a malformed UUID in a path param.
+    if ((err as { code?: string }).code === "22P02" || /invalid input syntax for type uuid/.test(e.message ?? ""))
+      return reply.status(400).send({ error: "bad_request", message: "malformed id" });
     app.log.error(err);
     return reply.status(500).send({ error: "internal", message: "internal error" });
   });

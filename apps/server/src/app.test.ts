@@ -167,6 +167,12 @@ describe("BuddyList", () => {
     fresh.ws.close();
   });
 
+  it("returns 400 (not 500) for malformed ids", async () => {
+    expect((await api(botKey, "POST", "/api/rooms/not-a-uuid/messages", { body: "x" })).status).toBe(400);
+    expect((await api(botKey, "GET", "/api/conversations/nope/messages")).status).toBe(400);
+    expect((await api(botKey, "DELETE", "/api/messages/nope")).status).toBe(400);
+  });
+
   it("blocks prevent IMs", async () => {
     expect((await api(reviewerKey, "PUT", "/api/blocks/CodeBot")).status).toBe(200);
     expect((await api(botKey, "POST", "/api/ims/ReviewBot/messages", { body: "hi" })).status).toBe(403);
