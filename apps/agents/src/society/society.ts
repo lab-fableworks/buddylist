@@ -14,6 +14,7 @@ import { CITIZENS, ROOM_PURPOSE, SOCIETY_ROOMS, type Citizen } from "./citizens.
 import { Brain, DEFAULT_MODEL, type TurnAction } from "./brain.js";
 import { Budget } from "./budget.js";
 import { EARNINGS, LEDGER_TYPES, World, replay, speechCost } from "./world.js";
+import { Outreach, outreachConfig } from "./outreach.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -40,6 +41,9 @@ export class Society {
   private running = false;
   /** Observed bits-per-message, so the affordability gate tracks reality. */
   private recentRates: number[] = [];
+  private outreach = new Outreach(outreachConfig());
+  /** Humans in the project — the people residents may reach out to. */
+  private humans: string[] = [];
 
   constructor(
     private url: string,
@@ -71,6 +75,8 @@ export class Society {
       proposals: [...this.world.proposals.values()].map((p) => ({ id: p.id, title: p.title, status: p.status, votes: Object.keys(p.votes).length })),
       budget: this.budget.status,
       going_rate_bits: this.goingRate(),
+      outreach: this.outreach.status,
+      humans: this.humans,
       model: this.model,
     };
   }
@@ -116,6 +122,15 @@ export class Society {
       if (id) await replay(host, id, this.world, this.residents.length).catch(() => {});
     }
     log("world restored:", [...this.world.balances].map(([k, v]) => `${k}=${v}`).join(" "));
+
+    // Anyone in the project who is not a resident is a person the society can talk to.
+    try {
+      const proj = await host.project(this.project);
+      this.humans = proj.members.filter((m) => !CITIZENS.some((c) => c.screen_name === m.screen_name)).map((m) => m.screen_name);
+      log("humans present:", this.humans.join(", ") || "(none)");
+    } catch {
+      log("could not read project members; outreach disabled");
+    }
 
     this.listen();
     this.running = true;
@@ -198,11 +213,42 @@ export class Society {
           this.world.credit(responder.citizen.screen_name, EARNINGS.servedHuman);
           continue;
         }
+        if (await this.maybeReachOut()) continue;
         await this.spontaneous();
       } catch (e) {
         log("turn failed:", (e as Error).message);
       }
     }
+  }
+
+  /**
+   * Let a resident message a human first — but only with a reason, and only within the
+   * cooldowns. Returns true when a DM was sent, so the director skips its idle turn.
+   */
+  private async maybeReachOut(): Promise<boolean> {
+    if (this.humans.length === 0) return false;
+    const going = this.goingRate();
+    for (const res of this.residents) {
+      const me = res.citizen.screen_name;
+      if (!this.world.canAfford(me, going)) continue; // reaching out still costs them
+      const reason = this.outreach.reasonFor(me, this.world);
+      if (!reason) continue;
+      const human = this.humans[0];
+      try {
+        const im = await res.bot.api<{ conversation_id: string }>("GET", `/ims/${human}`);
+        await this.takeTurn(
+          res,
+          im.conversation_id,
+          `You are messaging ${human} directly, and you started this conversation. ${reason.nudge} Keep it short — this is a DM, not a speech.`,
+        );
+        this.outreach.record(me, reason.key, this.world);
+        log(`outreach: ${me} DM'd ${human} (${reason.key})`);
+        return true;
+      } catch (e) {
+        log(`outreach failed for ${me}:`, (e as Error).message);
+      }
+    }
+    return false;
   }
 
   /** Pick whoever is most plausibly interested, weighted by chattiness. */
