@@ -13,7 +13,7 @@ import { BuddyList, type Message } from "@buddylist/sdk";
 import { CITIZENS, ROOM_PURPOSE, SOCIETY_ROOMS, type Citizen } from "./citizens.js";
 import { Brain, DEFAULT_MODEL, type TurnAction } from "./brain.js";
 import { Budget } from "./budget.js";
-import { LEDGER_TYPES, World, replay } from "./world.js";
+import { EARNINGS, LEDGER_TYPES, World, replay, speechCost } from "./world.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -38,6 +38,8 @@ export class Society {
   private urgent: Array<{ conversationId: string; from: string; text: string }> = [];
   private lastSpeaker = "";
   private running = false;
+  /** Observed bits-per-message, so the affordability gate tracks reality. */
+  private recentRates: number[] = [];
 
   constructor(
     private url: string,
@@ -53,6 +55,12 @@ export class Society {
   private apiKey: string;
   private model: string;
 
+  /** What a message currently costs, from observed spend. */
+  private goingRate() {
+    if (this.recentRates.length === 0) return 2;
+    return Math.max(1, Math.round(this.recentRates.reduce((a, b) => a + b, 0) / this.recentRates.length));
+  }
+
   get status() {
     return {
       residents: this.residents.map((r) => ({
@@ -62,6 +70,7 @@ export class Society {
       })),
       proposals: [...this.world.proposals.values()].map((p) => ({ id: p.id, title: p.title, status: p.status, votes: Object.keys(p.votes).length })),
       budget: this.budget.status,
+      going_rate_bits: this.goingRate(),
       model: this.model,
     };
   }
@@ -176,6 +185,8 @@ export class Society {
         if (urgent) {
           const responder = this.chooseResponder(urgent.text);
           await this.takeTurn(responder, urgent.conversationId, `${urgent.from} (a human, not a resident) just said: "${urgent.text}". Respond to them directly.`);
+          // Serving the human is the most reliable way to earn, which is the incentive we want.
+          this.world.credit(responder.citizen.screen_name, EARNINGS.servedHuman);
           continue;
         }
         await this.spontaneous();
@@ -206,7 +217,16 @@ export class Society {
     const conversationId = this.rooms.get(name) ?? this.rooms.get("commons")!;
     const transcript = this.transcripts.get(conversationId) ?? [];
 
-    const candidates = this.residents.filter((r) => r.citizen.screen_name !== this.lastSpeaker);
+    // Speech is not free. A citizen who cannot cover the going rate simply does not get a
+    // turn — that is the whole point of the currency, so the silence has to be real.
+    const going = this.goingRate();
+    const solvent = this.residents.filter((r) => this.world.canAfford(r.citizen.screen_name, going));
+    if (solvent.length === 0) {
+      log(`everyone is broke (rate ${going} bits) — paying the stipend`);
+      this.world.payStipend(this.residents.map((r) => r.citizen.screen_name));
+      return;
+    }
+    const candidates = (solvent.length > 1 ? solvent.filter((r) => r.citizen.screen_name !== this.lastSpeaker) : solvent);
     const speaker = pick(
       candidates.flatMap((r) => Array(Math.max(1, Math.round(r.citizen.chattiness * 4))).fill(r) as Resident[]),
     );
@@ -242,7 +262,11 @@ If what you want to say does not belong in this room, say something that does be
     });
 
     const cost = this.budget.record(result.usage);
+    const bits = speechCost(cost);
+    this.world.charge(me, bits);
     this.lastSpeaker = me;
+    this.recentRates.push(bits);
+    if (this.recentRates.length > 20) this.recentRates.shift();
 
     if (result.refused) {
       log(`${me} declined to answer (safety); skipping turn`);
@@ -252,7 +276,7 @@ If what you want to say does not belong in this room, say something that does be
     if (result.say) {
       const sent = await res.bot.send(conversationId, result.say).catch(async () => res.bot.api("POST", `/rooms/${conversationId}/messages`, { body: result.say }).catch(() => null));
       if (sent) this.remember({ ...(sent as Message), sender: me, body: result.say } as Message);
-      log(`${me} [$${cost.toFixed(4)}]: ${result.say.slice(0, 90)}`);
+      log(`${me} [$${cost.toFixed(4)} / ${bits}b, has ${this.world.balance(me)}b]: ${result.say.slice(0, 80)}`);
     }
 
     for (const a of result.actions) await this.enact(res, a).catch((e) => log(`${me} action ${a.name} failed:`, (e as Error).message));
@@ -306,6 +330,8 @@ If what you want to say does not belong in this room, say something that does be
       const id = String(action.input.proposal_id);
       const choice = action.input.choice === "against" ? "against" : "for";
       const resolved = this.world.vote(id, me, choice, this.residents.length);
+      this.world.credit(me, EARNINGS.votedq);
+      if (resolved?.status === "passed") this.world.credit(resolved.author, EARNINGS.proposalPassed);
       const proposals = room("proposals");
       if (!proposals) return;
       await res.bot

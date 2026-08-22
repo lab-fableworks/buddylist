@@ -28,6 +28,26 @@ export interface Opinion {
   note: string;
 }
 
+/**
+ * Bits are backed by real compute. A turn's cost in bits is derived from the dollars that turn
+ * actually spent on the API, so the in-world economy is a faithful shadow of the real one —
+ * scarcity here is not invented, it is the same scarcity the operator is paying for.
+ */
+export const BITS_PER_USD = Number(process.env.SOCIETY_BITS_PER_USD ?? 500);
+export const speechCost = (usd: number) => Math.max(1, Math.round(usd * BITS_PER_USD));
+
+/** What the world pays out for being useful. Earning has to be possible or everyone goes mute. */
+export const EARNINGS = {
+  /** Answering the human who owns the building. */
+  servedHuman: Number(process.env.SOCIETY_PAY_HUMAN ?? 10),
+  /** Your proposal carried. */
+  proposalPassed: Number(process.env.SOCIETY_PAY_PROPOSAL ?? 25),
+  /** Turning up to vote, win or lose. */
+  votedq: Number(process.env.SOCIETY_PAY_VOTE ?? 3),
+  /** Trickle so a bankrupt society can climb out rather than deadlock in silence. */
+  stipend: Number(process.env.SOCIETY_STIPEND ?? 4),
+};
+
 export class World {
   balances = new Map<string, number>();
   /** who -> about -> opinion */
@@ -40,6 +60,23 @@ export class World {
 
   balance(who: string) {
     return this.balances.get(who) ?? 0;
+  }
+  credit(who: string, amount: number) {
+    this.balances.set(who, this.balance(who) + amount);
+  }
+  /** Charge for speaking. Returns false when they cannot afford it. */
+  charge(who: string, amount: number): boolean {
+    const b = this.balance(who);
+    if (b < amount) return false;
+    this.balances.set(who, b - amount);
+    return true;
+  }
+  canAfford(who: string, amount: number) {
+    return this.balance(who) >= amount;
+  }
+  /** Everyone gets a small trickle, so bankruptcy is a setback rather than a death. */
+  payStipend(everyone: string[]) {
+    for (const n of everyone) this.credit(n, EARNINGS.stipend);
   }
 
   /** Returns an error string when the payer cannot cover it, otherwise undefined. */
@@ -89,7 +126,13 @@ export class World {
 
   /** A short, human-readable digest of this citizen's standing, injected per turn. */
   digestFor(who: string, everyone: string[]): string {
-    const lines: string[] = [`Your balance: ${this.balance(who)} bits.`];
+    const bal = this.balance(who);
+    const lines: string[] = [
+      `Your balance: ${bal} bits.`,
+      `Speaking costs bits — roughly ${Math.round(0.0035 * BITS_PER_USD)} per message, more when you talk at length. If you cannot pay, you cannot speak at all until you earn some.`,
+      `You earn bits by: answering the human (+${EARNINGS.servedHuman}), getting a proposal passed (+${EARNINGS.proposalPassed}), voting (+${EARNINGS.votedq}), and being tipped by others.`,
+      bal < 15 ? "You are nearly broke. Being useful is now urgent — say something worth paying for, or ask someone to tip you." : "",
+    ].filter(Boolean);
     const mine = this.opinions.get(who);
     if (mine?.size) {
       const notes = [...mine.entries()]
