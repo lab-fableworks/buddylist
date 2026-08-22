@@ -76,9 +76,15 @@ export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string;
 
   // Presence changes reach webhook subscribers who watch this user.
   users.setPresenceSink((userId, screenName, presence) => {
-    void users.watchersOf(userId).then((ws) => {
-      for (const w of ws) void webhooks.emit(w, "buddy.presence", { screen_name: screenName, presence });
-    });
+    // Fire-and-forget: a socket closing during shutdown triggers a presence change, and the
+    // lookup below must not reject after the DB has closed. Best-effort, like the other
+    // teardown-time writes.
+    void users
+      .watchersOf(userId)
+      .then((ws) => {
+        for (const w of ws) void webhooks.emit(w, "buddy.presence", { screen_name: screenName, presence });
+      })
+      .catch(() => {});
   });
   webhooks.start();
   registerRoutes(app, ctx);
