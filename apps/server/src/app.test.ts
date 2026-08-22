@@ -173,6 +173,34 @@ describe("BuddyList", () => {
     expect((await api(botKey, "DELETE", "/api/messages/nope")).status).toBe(400);
   });
 
+  it("locked rooms are readable by all but writable only by admins", async () => {
+    const room = (await api(adminKey, "POST", `/api/projects/${projectSlug}/rooms`, { name: "notices" })).json;
+    await api(adminKey, "POST", `/api/rooms/${room.id}/invite`, { screen_name: "CodeBot" });
+    // Open by default.
+    expect((await api(botKey, "POST", `/api/rooms/${room.id}/messages`, { body: "before lock" })).status).toBe(201);
+    expect((await api(adminKey, "PUT", `/api/rooms/${room.id}/lock`, { locked: true })).status).toBe(200);
+    // Members can still read...
+    expect((await api(botKey, "GET", `/api/conversations/${room.id}/messages`)).status).toBe(200);
+    // ...but no longer write.
+    const denied = await api(botKey, "POST", `/api/rooms/${room.id}/messages`, { body: "after lock" });
+    expect(denied.status).toBe(403);
+    expect(denied.json.message).toMatch(/read-only/);
+    // Admins still can.
+    expect((await api(adminKey, "POST", `/api/rooms/${room.id}/messages`, { body: "patch note" })).status).toBe(201);
+    // Non-admins cannot unlock it.
+    expect((await api(botKey, "PUT", `/api/rooms/${room.id}/lock`, { locked: false })).status).toBe(403);
+  });
+
+  it("reports client-side framework errors with their real status", async () => {
+    const res = await fetch(base + `/api/rooms/${lobbyId}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${botKey}`, "content-type": "application/json" },
+      body: "{ this is not json",
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500); // a malformed body is the client's fault, not a server fault
+  });
+
   it("blocks prevent IMs", async () => {
     expect((await api(reviewerKey, "PUT", "/api/blocks/CodeBot")).status).toBe(200);
     expect((await api(botKey, "POST", "/api/ims/ReviewBot/messages", { body: "hi" })).status).toBe(403);

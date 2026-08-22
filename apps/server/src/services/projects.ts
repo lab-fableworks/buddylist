@@ -114,7 +114,11 @@ export function projectsService(db: Db, bus: Bus) {
   async function setTopic(roomId: string, topic: string) {
     await db.query("UPDATE conversations SET topic=$2 WHERE id=$1", [roomId, topic]);
   }
+  /** Locked rooms are readable by every member but writable only by project admins. */
+  async function setLocked(roomId: string, locked: boolean) {
+    await db.query("UPDATE conversations SET locked=$2 WHERE id=$1", [roomId, locked]);
+  }
 
-  return { bySlug, roleOf, requireRole, create, addMember, removeMember, members, listForUser, createRoom, rooms, roomById, joinRoom, inviteToRoom, leaveRoom, setTopic };
+  return { bySlug, roleOf, requireRole, create, addMember, removeMember, members, listForUser, createRoom, rooms, roomById, joinRoom, inviteToRoom, leaveRoom, setTopic, setLocked };
 }
 export type ProjectsService = ReturnType<typeof projectsService>;

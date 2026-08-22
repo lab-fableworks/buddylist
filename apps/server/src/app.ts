@@ -74,6 +74,11 @@ export async function buildApp(
     // Postgres 22P02 invalid_text_representation — almost always a malformed UUID in a path param.
     if ((err as { code?: string }).code === "22P02" || /invalid input syntax for type uuid/.test(e.message ?? ""))
       return reply.status(400).send({ error: "bad_request", message: "malformed id" });
+    // Fastify's own errors (bad content-length, body too large, malformed JSON) already carry
+    // the right status. Flattening those to 500 blames the server for a client mistake.
+    const status = (err as { statusCode?: number }).statusCode;
+    if (typeof status === "number" && status >= 400 && status < 500)
+      return reply.status(status).send({ error: (err as { code?: string }).code ?? "bad_request", message: e.message ?? "bad request" });
     app.log.error(err);
     return reply.status(500).send({ error: "internal", message: "internal error" });
   });

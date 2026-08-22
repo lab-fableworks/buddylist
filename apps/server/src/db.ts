@@ -188,6 +188,7 @@ CREATE TABLE IF NOT EXISTS reactions (
 /** Additive migrations that must run after the base schema. */
 const MIGRATIONS = `
 ALTER TABLE users ADD COLUMN IF NOT EXISTS activity JSONB;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT false;
 `;
 
 export async function migrate(db: Db) {

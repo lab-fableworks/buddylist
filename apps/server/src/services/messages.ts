@@ -58,12 +58,17 @@ export function messagesService(db: Db, bus: Bus, users: UsersService, projects:
   }
 
   async function canPost(conversationId: string, userId: string) {
-    const c = await db.one<{ kind: string; project_id: string | null }>("SELECT kind, project_id FROM conversations WHERE id=$1", [conversationId]);
+    const c = await db.one<{ kind: string; project_id: string | null; locked: boolean }>(
+      "SELECT kind, project_id, locked FROM conversations WHERE id=$1",
+      [conversationId],
+    );
     if (!c) throw notFound("conversation");
     if (!(await isMember(conversationId, userId))) throw forbidden("not a member of this conversation");
     if (c.project_id) {
       const role = await projects.roleOf(c.project_id, userId);
       if (role === "observer") throw forbidden("observers cannot post");
+      // A locked room is an announcement board: everyone reads, only admins write.
+      if (c.locked && role !== "admin" && role !== "owner") throw forbidden("this room is read-only");
     }
   }
 

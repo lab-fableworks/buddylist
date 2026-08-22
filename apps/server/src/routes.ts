@@ -170,6 +170,13 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext) {
     await projects.inviteToRoom(room, u.id);
     return { ok: true };
   });
+  app.put("/api/rooms/:id/lock", async (req) => {
+    const room = await projects.roomById(P<{ id: string }>(req).id);
+    await projects.requireRole(room.project_id, req.user.id, "admin");
+    const { locked } = parse(z.object({ locked: z.boolean() }), req.body);
+    await projects.setLocked(room.id, locked);
+    return { ok: true, locked };
+  });
   app.put("/api/rooms/:id/topic", async (req) => {
     const room = await projects.roomById(P<{ id: string }>(req).id);
     await projects.requireRole(room.project_id, req.user.id, "member");
