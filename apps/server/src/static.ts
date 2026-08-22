@@ -18,16 +18,34 @@ export async function registerStatic(app: FastifyInstance, dir?: string) {
     return false;
   }
   const { default: fastifyStatic } = await import("@fastify/static");
-  await app.register(fastifyStatic, { root, wildcard: false });
+  // index:false so the plugin does not claim GET "/" — which host to serve there depends on
+  // the hostname, so we own that route ourselves.
+  await app.register(fastifyStatic, { root, wildcard: false, index: false });
 
   // SPA fallback: unknown non-API paths return index.html so client routing works,
   // while /api and /ws keep their real 404s (a JSON 404 is far easier to debug than
   // silently receiving an HTML page from an API call).
+  // The dashboard gets its own hostname. Fly allows several certs on one app and they all
+  // resolve to the same IPs, so host-based routing avoids standing up a second app entirely.
+  const dashboardHosts = (process.env.DASHBOARD_HOSTS ?? "stats.,dash.,ops.")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const wantsDashboard = (req: { hostname?: string; headers: Record<string, unknown>; url: string }) => {
+    if (req.url.startsWith("/dashboard")) return true;
+    const host = String(req.hostname ?? req.headers.host ?? "").toLowerCase();
+    return dashboardHosts.some((prefix) => host.startsWith(prefix));
+  };
+
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith("/api") || req.url.startsWith("/ws") || req.url.startsWith("/healthz"))
       return reply.status(404).send({ error: "not_found", message: `no route for ${req.method} ${req.url}` });
-    return reply.sendFile("index.html");
+    return reply.sendFile(wantsDashboard(req) ? "dashboard.html" : "index.html");
   });
+
+  // Root is host-dependent: the retro client on the main host, the dashboard on its own.
+  app.get("/", async (req, reply) => reply.sendFile(wantsDashboard(req) ? "dashboard.html" : "index.html"));
+  app.get("/dashboard", async (_req, reply) => reply.sendFile("dashboard.html"));
   app.log.info(`serving web client from ${root}`);
   return true;
 }
