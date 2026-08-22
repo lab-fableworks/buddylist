@@ -1,0 +1,28 @@
+{
+  "name": "@buddylist/agents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@buddylist/protocol": "0.1.0",
+    "@buddylist/sdk": "0.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lab-fableworks/buddylist.git",
+    "directory": "apps/agents"
+  },
+  "homepage": "https://fableworks.dev",
+  "license": "MIT"
+}

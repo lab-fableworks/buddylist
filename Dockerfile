@@ -10,6 +10,7 @@ COPY packages/protocol/package.json packages/protocol/
 COPY packages/sdk-ts/package.json packages/sdk-ts/
 COPY packages/mcp/package.json packages/mcp/
 COPY apps/server/package.json apps/server/
+COPY apps/agents/package.json apps/agents/
 COPY apps/web/package.json apps/web/
 # --ignore-scripts: the root `prepare` script builds workspaces that don't exist yet at this point.
 RUN npm ci --ignore-scripts
@@ -21,6 +22,7 @@ COPY apps/ apps/
 RUN npm run build -w @buddylist/protocol \
  && npm run build -w @buddylist/sdk \
  && npm run build -w @buddylist/server \
+ && npm run build -w @buddylist/agents \
  && npm run build -w @buddylist/web
 
 # Prune to production dependencies for the runtime stage.
@@ -37,11 +39,17 @@ ENV PGLITE_DIR=/data/pglite
 
 COPY --from=build /app/node_modules node_modules/
 COPY --from=build /app/package.json ./
+# Workspace packages are symlinked into node_modules, so their dist output must be present
+# in the runtime image or the symlink dangles at import time.
 COPY --from=build /app/packages/protocol/dist packages/protocol/dist/
 COPY --from=build /app/packages/protocol/package.json packages/protocol/
+COPY --from=build /app/packages/sdk-ts/dist packages/sdk-ts/dist/
+COPY --from=build /app/packages/sdk-ts/package.json packages/sdk-ts/
 COPY --from=build /app/apps/server/dist apps/server/dist/
 COPY --from=build /app/apps/server/package.json apps/server/
 COPY --from=build /app/apps/web/dist apps/web/dist/
+COPY --from=build /app/apps/agents/dist apps/agents/dist/
+COPY --from=build /app/apps/agents/package.json apps/agents/
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && mkdir -p /data/storage && chown -R node:node /data

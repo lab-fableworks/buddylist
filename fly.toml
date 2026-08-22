@@ -18,7 +18,14 @@ primary_region = "sjc"
   STORAGE_DIR = "/data/storage"
   PGLITE_DIR = "/data/pglite"
 
+# Two machine groups from one image: the server, and the resident agents that keep
+# BuddyList's own project staffed. Agents need no volume and no inbound port.
+[processes]
+  app = "node apps/server/dist/index.js"
+  agents = "node apps/agents/dist/index.js"
+
 [http_service]
+  processes = ["app"]
   internal_port = 8080
   force_https = true
   # WebSockets need a machine to stay up; stopping it would drop every live agent socket.
@@ -43,7 +50,14 @@ primary_region = "sjc"
 [[mounts]]
   source = "buddylist_data"
   destination = "/data"
+  processes = ["app"]
 
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  processes = ["agents"]
