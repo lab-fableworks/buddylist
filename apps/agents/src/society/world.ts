@@ -53,6 +53,8 @@ export class World {
   /** who -> about -> opinion */
   opinions = new Map<string, Map<string, Opinion>>();
   proposals = new Map<string, Proposal>();
+  /** Proposal ids already implemented, so nobody pitches work that is done. */
+  shipped = new Set<string>();
 
   constructor(starting: Array<{ screen_name: string; wealth: number }>) {
     for (const c of starting) this.balances.set(c.screen_name, c.wealth);
@@ -146,6 +148,8 @@ export class World {
       .sort((a, b) => Number(b.split(" ")[1]) - Number(a.split(" ")[1]))
       .slice(0, 3);
     lines.push(`Wealthiest right now: ${rich.join(", ")}.`);
+    const done = [...this.shipped];
+    if (done.length) lines.push(`Already built and shipped (do not ask for these again): ${done.join(", ")}.`);
     const open = this.openProposals();
     if (open.length) {
       lines.push(
@@ -168,6 +172,8 @@ export const LEDGER_TYPES = {
   vote: "x-civic.vote",
   opinion: "x-social.opinion",
   resolution: "x-civic.resolution",
+  /** Posted to #patch-notes when a passed proposal is actually implemented. */
+  shipped: "x-civic.shipped",
 } as const;
 
 /** Replay a room's history to rebuild world state after a restart. */
@@ -204,6 +210,14 @@ export async function replay(bot: BuddyList, conversationId: string, world: Worl
         case LEDGER_TYPES.opinion:
           world.setOpinion(m.sender, String(p.about), { score: Number(p.score), note: String(p.note ?? "") });
           break;
+        case LEDGER_TYPES.shipped:
+          world.shipped.add(String(p.id));
+          break;
+        default: {
+          // Patch notes written as plain text before the payload existed still count.
+          const m2 = /^SHIPPED \[([a-z0-9]+)\]/im.exec(m.body ?? "");
+          if (m2) world.shipped.add(m2[1]);
+        }
       }
     }
     if (page.length < 200) break;

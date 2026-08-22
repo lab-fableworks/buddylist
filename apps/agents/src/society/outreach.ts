@@ -85,6 +85,8 @@ export class Outreach {
     // A proposal of yours carried and the human is the one who can actually ship it.
     for (const p of world.proposals.values()) {
       if (p.author !== name || p.status !== "passed") continue;
+      // Already built — pitching it again would be asking for work that is done.
+      if (world.shipped.has(p.id)) continue;
       const key = `passed:${p.id}`;
       if (s.used.has(key)) continue;
       return {

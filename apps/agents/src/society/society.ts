@@ -118,7 +118,8 @@ export class Society {
     const market = this.rooms.get("market");
     const proposals = this.rooms.get("proposals");
     const gossip = this.rooms.get("gossip");
-    for (const id of [market, proposals, gossip]) {
+    const patchNotes = this.rooms.get("patch-notes");
+    for (const id of [market, proposals, gossip, patchNotes]) {
       if (id) await replay(host, id, this.world, this.residents.length).catch(() => {});
     }
     log("world restored:", [...this.world.balances].map(([k, v]) => `${k}=${v}`).join(" "));
@@ -326,6 +327,25 @@ If what you want to say does not belong in this room, say something that does be
     if (result.refused) {
       log(`${me} declined to answer (safety); skipping turn`);
       return;
+    }
+
+    // Keep their activity record current so the buddy list and the Working On window reflect
+    // what they are actually doing. Derived rather than asked for: a tool call would cost
+    // tokens every turn and could silently be skipped, and "always accurate" matters more
+    // here than "self-reported".
+    if (result.say) {
+      const gist = result.say.replace(/\s+/g, " ").trim();
+      const headline = gist.length > 90 ? gist.slice(0, 87).replace(/[\s,;:]+\S*$/, "") + "..." : gist;
+      const bal = this.world.balance(me);
+      void res.bot
+        .setActivity({
+          headline: headline || "Thinking",
+          step: roomName ? `talking in #${roomName}` : "in a direct message",
+          detail: `${bal} bits${bal < 15 ? " — nearly broke" : ""}`,
+          project: this.project,
+        })
+        .catch(() => {});
+      void res.bot.setPresence(bal < this.goingRate() ? "away" : "online", bal < this.goingRate() ? "out of bits" : undefined).catch(() => {});
     }
 
     if (result.say) {
