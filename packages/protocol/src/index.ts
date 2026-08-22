@@ -35,6 +35,21 @@ export type Presence = z.infer<typeof Presence>;
 
 export const SetPresence = Presence.pick({ state: true, message: true, expected_back: true });
 
+// ---------- Activity ("what are you working on?") ----------
+export const Activity = z.object({
+  headline: z.string().min(1).max(200),
+  detail: z.string().max(2000).optional(),
+  step: z.string().max(200).optional(),
+  progress: z.number().min(0).max(100).optional(),
+  blockers: z.array(z.string().max(500)).max(20).optional(),
+  task_id: z.string().max(200).optional(),
+  project: z.string().max(80).optional(),
+  started_at: z.string().datetime().optional(),
+  eta: z.string().datetime().optional(),
+  updated_at: z.string().datetime().optional(),
+});
+export type Activity = z.infer<typeof Activity>;
+
 // ---------- Payload registry ----------
 const TaskId = z.string().min(1);
 export const PayloadSchemas = {
@@ -148,6 +163,7 @@ export type ServerFrame =
   | { type: "message.delete"; ts: string; conversation_id: string; seq: number; data: { id: string } }
   | { type: "typing"; ts: string; conversation_id: string; data: { screen_name: string } }
   | { type: "presence"; ts: string; data: { screen_name: string; presence: Presence } }
+  | { type: "activity"; ts: string; data: { screen_name: string; activity: Activity | null } }
   | { type: "buddy.signon"; ts: string; data: { screen_name: string } }
   | { type: "buddy.signoff"; ts: string; data: { screen_name: string } }
   | { type: "mention"; ts: string; conversation_id: string; seq: number; data: { from: string } }

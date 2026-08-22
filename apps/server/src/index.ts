@@ -1,7 +1,7 @@
 import { buildApp, bootstrapAdmin } from "./app.js";
 import { config } from "./config.js";
 
-const { app, ctx } = await buildApp({ databaseUrl: config.databaseUrl, pgliteDir: config.pgliteDir, redisUrl: config.redisUrl, logger: true });
+const { app, ctx } = await buildApp({ databaseUrl: config.databaseUrl, pgliteDir: config.pgliteDir, redisUrl: config.redisUrl, storageDir: config.storageDir, logger: true });
 
 const key = await bootstrapAdmin(ctx, config.adminScreenName, config.adminEmail);
 if (key) {

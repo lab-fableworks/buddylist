@@ -141,6 +141,7 @@ export function registerWs(app: FastifyInstance, ctx: AppContext) {
       if (mine.size === 0) {
         sessions.delete(user.id);
         await users.setPresence(user, undefined).catch(() => {}); // server may be shutting down
+        await ctx.activity.clear(user.id, user.screen_name).catch(() => {});
       }
     });
   });

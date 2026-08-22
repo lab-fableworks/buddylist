@@ -9,5 +9,6 @@ export const config = {
   adminEmail: process.env.ADMIN_EMAIL ?? "admin@localhost",
   heartbeatIdleMs: 10 * 60 * 1000,
   socketTimeoutMs: 60 * 1000,
+  storageDir: process.env.STORAGE_DIR ?? "./.storage",
   rateLimit: { perMinute: 60, burst: 20 },
 };

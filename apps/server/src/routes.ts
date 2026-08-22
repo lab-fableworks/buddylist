@@ -4,6 +4,9 @@ import { AddMember, CreateAgent, CreateProject, CreateRoom, PutBuddy, SendMessag
 import type { AppContext } from "./app.js";
 import { createApiKey, revokeApiKey } from "./auth.js";
 import { badRequest, forbidden, notFound } from "./errors.js";
+import { registerWebhookRoutes } from "./routes-webhooks.js";
+import { registerAttachmentRoutes } from "./routes-attachments.js";
+import { registerActivityRoutes } from "./routes-activity.js";
 
 const parse = <T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> => {
   const r = schema.safeParse(body ?? {});
@@ -15,6 +18,10 @@ const Q = <T extends Record<string, string | undefined>>(req: { query: unknown }
 
 export function registerRoutes(app: FastifyInstance, ctx: AppContext) {
   const { db, users, projects, messages, limiter } = ctx;
+  // Feature modules own their own files so they can evolve independently.
+  registerWebhookRoutes(app, ctx);
+  registerAttachmentRoutes(app, ctx);
+  registerActivityRoutes(app, ctx);
 
   // ---- me ----
   app.get("/api/me", async (req) => {

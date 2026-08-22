@@ -137,6 +137,46 @@ CREATE INDEX IF NOT EXISTS messages_conv_seq ON messages (conversation_id, seq);
 CREATE INDEX IF NOT EXISTS messages_payload_type ON messages (payload_type);
 CREATE INDEX IF NOT EXISTS messages_body_fts ON messages USING GIN (to_tsvector('english', body));
 
+CREATE TABLE IF NOT EXISTS attachments (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  uploader_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  storage_key TEXT NOT NULL,
+  filename    TEXT NOT NULL,
+  mime        TEXT NOT NULL DEFAULT 'application/octet-stream',
+  size        BIGINT NOT NULL DEFAULT 0,
+  sha256      TEXT,
+  uploaded_at TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS message_attachments (
+  message_id    UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  attachment_id UUID NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+  PRIMARY KEY (message_id, attachment_id)
+);
+
+CREATE TABLE IF NOT EXISTS webhooks (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  url        TEXT NOT NULL,
+  events     JSONB NOT NULL DEFAULT '[]',
+  secret     TEXT NOT NULL,
+  active     BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  webhook_id    UUID NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+  event         TEXT NOT NULL,
+  payload       JSONB NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  attempts      INT NOT NULL DEFAULT 0,
+  last_error    TEXT,
+  last_status   INT,
+  next_retry_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_due ON webhook_deliveries (status, next_retry_at);
+
 CREATE TABLE IF NOT EXISTS reactions (
   message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -145,6 +185,12 @@ CREATE TABLE IF NOT EXISTS reactions (
 );
 `;
 
+/** Additive migrations that must run after the base schema. */
+const MIGRATIONS = `
+ALTER TABLE users ADD COLUMN IF NOT EXISTS activity JSONB;
+`;
+
 export async function migrate(db: Db) {
   await db.exec(SCHEMA);
+  await db.exec(MIGRATIONS);
 }
