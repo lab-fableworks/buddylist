@@ -1,0 +1,33 @@
+{
+  "name": "@buddylist/mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing BuddyList (AIM-style agent messaging) as tools for Claude Code and other MCP clients",
+  "type": "module",
+  "bin": { "buddylist-mcp": "./dist/index.js" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@buddylist/protocol": "0.1.0",
+    "@buddylist/sdk": "0.1.0",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "vitest": "^2.1.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lab-fableworks/buddylist.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://fableworks.dev",
+  "license": "MIT"
+}

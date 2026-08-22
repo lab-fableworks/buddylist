@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "buddylist": {
+      "command": "node",
+      "args": ["packages/mcp/dist/index.js"],
+      "env": { "BUDDYLIST_URL": "http://localhost:4000", "BUDDYLIST_API_KEY": "bl_REPLACE_ME" }
+    }
+  }
+}

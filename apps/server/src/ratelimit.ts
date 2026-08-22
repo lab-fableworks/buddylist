@@ -39,7 +39,7 @@ export function rateLimiter(db: Db, opts: { perMinute: number; burst: number }) 
     buckets.set(userId, b);
     w.level = Math.min(100, w.level + 5);
     if (w.level >= 90) w.timeoutUntil = now + 15 * 60_000;
-    void db.query("UPDATE users SET warn_level=$2 WHERE id=$1", [userId, w.level]);
+    db.query("UPDATE users SET warn_level=$2 WHERE id=$1", [userId, w.level]).catch(() => {});
     return { allowed: false, level: w.level, reason: "rate limit exceeded" };
   }
 

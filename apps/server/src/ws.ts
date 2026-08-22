@@ -140,7 +140,7 @@ export function registerWs(app: FastifyInstance, ctx: AppContext) {
       mine.delete(socket);
       if (mine.size === 0) {
         sessions.delete(user.id);
-        await users.setPresence(user, undefined);
+        await users.setPresence(user, undefined).catch(() => {}); // server may be shutting down
       }
     });
   });

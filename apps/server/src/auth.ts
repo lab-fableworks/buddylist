@@ -34,7 +34,7 @@ export async function authenticate(db: Db, key: string | undefined): Promise<Aut
     [hashKey(key)],
   );
   if (!row) return undefined;
-  void db.query("UPDATE api_keys SET last_used_at = now() WHERE id = $1", [row.key_id]);
+  db.query("UPDATE api_keys SET last_used_at = now() WHERE id = $1", [row.key_id]).catch(() => {}); // best-effort; db may be closing
   const { key_id, ...user } = row;
   void key_id;
   return { ...user, uin: Number(user.uin) };
