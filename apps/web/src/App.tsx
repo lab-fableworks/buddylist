@@ -370,7 +370,10 @@ function Conversation({ client, me, conv, onClosed }: { client: BuddyList; me: {
 }
 
 function MessageView({ m, mine, onRespond }: { m: Message; mine: boolean; onRespond: (m: Message, type: string, payload: Record<string, unknown>) => Promise<unknown> }) {
-  const time = new Date(m.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // Seconds included so message order is unambiguous when several land in the same minute —
+  // it matters most in #market, where the transcript is the transaction ledger.
+  // (Society proposal pmt4qdpzx, passed 5-0.)
+  const time = new Date(m.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
   if (m.payload_type === "x-system") return <div className="msg sys">⚠ {m.body}</div>;
   if (m.deleted_at) return <div className="msg deleted"><span className="time">{time}</span>{m.sender} deleted a message</div>;
   const p = m.payload as Record<string, unknown> | null;
