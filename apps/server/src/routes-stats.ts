@@ -91,7 +91,7 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
              FROM messages m JOIN users u ON u.id = m.sender_id
             WHERE m.conversation_id = ANY($1::uuid[]) AND m.deleted_at IS NULL
               AND m.payload_type IN ('x-economy.transfer','x-economy.grant')
-            ORDER BY m.seq`,
+            ORDER BY m.ts, m.seq`,
           [roomIds],
         );
 
@@ -142,7 +142,10 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
                    -- Patch notes written before the shipped payload existed are plain text.
                    -- Ignoring them makes finished work sit in "awaiting your decision" forever.
                    OR m.body ~* '^SHIPPED[^\[]*\[[a-z0-9]+\]')
-            ORDER BY m.seq`,
+            -- seq is per conversation. Ordering by it across rooms put a #patch-notes marker
+            -- (seq 4) before the #proposals entry it refers to (seq 40), so it was dropped and
+            -- every shipped proposal showed as still awaiting a decision. Time is global.
+            ORDER BY m.ts, m.seq`,
           [roomIds],
         );
 

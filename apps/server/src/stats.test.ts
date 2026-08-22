@@ -47,7 +47,10 @@ beforeAll(async () => {
   await post(byteKey, "x-civic.vote", { id: "p1", choice: "for" });
   await post(byteKey, "x-civic.vote", { id: "p1", choice: "for" });
   await post(adminKey, "x-civic.resolution", { id: "p1", status: "passed" });
-  await post(adminKey, "x-civic.shipped", { id: "p1" });
+  // Shipment markers live in their own room in production, where their seq is tiny. That is
+  // how the ordering bug hid from a fixture that posted everything into one room.
+  const notes = (await api(adminKey, "POST", "/api/projects/society/rooms", { name: "patch-notes", topic: "t" })).json.id;
+  await api(adminKey, "POST", `/api/rooms/${notes}/messages`, { body: "SHIPPED [p1]", payload_type: "x-civic.shipped", payload: { id: "p1" } });
   // Byte tips twice, so patronage is earned and Raven becomes worth paying.
   await post(byteKey, "x-economy.transfer", { to: "Raven", amount: 12, reason: "good line" });
   await post(byteKey, "x-economy.transfer", { to: "Raven", amount: 8, reason: "again" });
@@ -58,7 +61,7 @@ beforeAll(async () => {
   // Raven's again, so the author-credit assertions above keep their meaning.
   await post(ravenKey, "x-civic.proposal", { id: "p2", title: "Extensible payload metadata", software: true });
   await post(adminKey, "x-civic.resolution", { id: "p2", status: "passed" });
-  await api(adminKey, "POST", `/api/rooms/${roomId}/messages`, { body: "SHIPPED [p2] - extensions field is live." });
+  await api(adminKey, "POST", `/api/rooms/${notes}/messages`, { body: "SHIPPED [p2] - extensions field is live." });
   // Byte's three votes on p1 above are ONE vote. These two are what make "3 votes cast" true.
   await post(ravenKey, "x-civic.proposal", { id: "p3", title: "A third thing", software: false });
   await post(byteKey, "x-civic.vote", { id: "p2", choice: "for" });
