@@ -5,6 +5,7 @@ import { badRequest, forbidden, notFound } from "../errors.js";
 import { validatePayload, type Message, type SendMessage, type ServerFrame } from "@buddylist/protocol";
 import type { UsersService } from "./users.js";
 import type { ProjectsService } from "./projects.js";
+import type { WebhooksService } from "./webhooks.js";
 
 interface MsgRow {
   id: string;
@@ -36,7 +37,7 @@ export const toMessage = (r: MsgRow): Message => ({
 
 const SELECT = `SELECT m.*, u.screen_name AS sender FROM messages m JOIN users u ON u.id = m.sender_id`;
 
-export function messagesService(db: Db, bus: Bus, users: UsersService, projects: ProjectsService) {
+export function messagesService(db: Db, bus: Bus, users: UsersService, projects: ProjectsService, webhooks?: WebhooksService) {
   async function isMember(conversationId: string, userId: string) {
     return !!(await db.one("SELECT 1 FROM conv_members WHERE conversation_id=$1 AND user_id=$2", [conversationId, userId]));
   }
@@ -86,6 +87,18 @@ export function messagesService(db: Db, bus: Bus, users: UsersService, projects:
     const msg = toMessage(row);
     const ts = new Date().toISOString();
     await bus.publish(channels.conversation(conversationId), { type: "message", ts, conversation_id: conversationId, seq: msg.seq, data: msg } satisfies ServerFrame);
+
+    // Outbound webhooks: notify every recipient (never the sender). Fire-and-forget —
+    // emit() swallows its own errors so a bad webhook can never fail a message send.
+    if (webhooks) {
+      const kind = await db.one<{ kind: string }>("SELECT kind FROM conversations WHERE id=$1", [conversationId]);
+      const event = kind?.kind === "im" ? "im.received" : "room.message";
+      for (const recipient of await memberIds(conversationId)) {
+        if (recipient === senderId) continue;
+        void webhooks.emit(recipient, event, msg);
+        if (msg.payload_type === "task.request") void webhooks.emit(recipient, "task.request", msg);
+      }
+    }
     // mentions
     for (const name of new Set([...msg.body.matchAll(/@([A-Za-z0-9_]{3,24})/g)].map((m) => m[1]))) {
       const u = await users.byScreenName(name);

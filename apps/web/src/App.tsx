@@ -3,7 +3,10 @@ import { BuddyList, type Message, type Presence } from "@buddylist/sdk";
 import { WindowManager, useWM } from "./wm";
 import { sfx, isMuted, setMuted } from "./sounds";
 
-type Buddy = { screen_name: string; kind: string; presence: Presence; capabilities: Record<string, unknown>; warn_level?: number; uin?: number; profile?: { bio?: string } };
+type Activity = { headline: string; detail?: string; step?: string; progress?: number; blockers?: string[]; project?: string; task_id?: string; started_at?: string; eta?: string; updated_at?: string } | null;
+type Buddy = { screen_name: string; kind: string; presence: Presence; capabilities: Record<string, unknown>; warn_level?: number; uin?: number; profile?: { bio?: string }; activity?: Activity };
+type ActivityView = { screen_name: string; kind: string; presence: Presence; activity: Activity; stale: boolean; recent_work: Array<{ payload_type: string; body: string; ts: string }>; };
+type Standup = { project: string; as_of: string; members: Array<{ screen_name: string; kind: string; role: string; presence: Presence; activity: Activity }> };
 type Group = { name: string; buddies: Buddy[] };
 type Conv = { id: string; kind: "im" | "room"; name: string | null; peer: string | null; last_seq: number; last_read_seq: number };
 
@@ -93,6 +96,9 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
       client.on("presence", (f) => {
         setGroups((gs) => gs.map((g) => ({ ...g, buddies: g.buddies.map((b) => (b.screen_name === f.data.screen_name ? { ...b, presence: f.data.presence } : b)) })));
       }),
+      client.on("activity", (f) => {
+        setGroups((gs) => gs.map((g) => ({ ...g, buddies: g.buddies.map((b) => (b.screen_name === f.data.screen_name ? { ...b, activity: f.data.activity } : b)) })));
+      }),
       client.on("buddy.signon", () => sfx.doorOpen()),
       client.on("buddy.signoff", () => sfx.doorClose()),
       client.on("mention", () => sfx.ping()),
@@ -137,7 +143,7 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
   };
   const openInfo = async (name: string) => {
     const u = await client.api<Buddy>("GET", `/users/${name}`);
-    wm.open({ id: "info:" + name, title: `${name} — Info`, icon: "ℹ", className: "dialog", render: ({ close }) => <Info u={u} onIM={() => (close(), openIM(name))} onWarn={() => client.api("POST", `/users/${name}/warn`).then(refresh)} /> });
+    wm.open({ id: "info:" + name, title: `${name} — Info`, icon: "ℹ", className: "dialog", render: ({ close }) => <Info client={client} u={u} onIM={() => (close(), openIM(name))} onWarn={() => client.api("POST", `/users/${name}/warn`).then(refresh)} /> });
   };
   const setAway = () => {
     wm.open({
@@ -159,6 +165,7 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
   const openProjects = () => wm.open({ id: "projects", title: "Projects & Rooms", icon: "📁", className: "dialog", render: () => <Projects client={client} onOpenRoom={(c) => (refresh(), openConversation(c))} /> });
   const openNewAgent = () => wm.open({ id: "newagent", title: "Register Agent", icon: "🤖", className: "dialog", render: ({ close }) => <NewAgent client={client} onDone={() => (refresh(), close())} /> });
   const openSearch = () => wm.open({ id: "search", title: "Find Messages", icon: "🔍", className: "dialog", render: () => <Search client={client} /> });
+  const openStandup = () => wm.open({ id: "standup", title: "Who's Working On What", icon: "⚙", className: "standup", render: () => <StandupWindow client={client} onAsk={openInfo} onIM={openIM} /> });
 
   const rooms = convs.filter((c) => c.kind === "room");
   const totalUnread = Object.values(unread).reduce((a, b) => a + b, 0);
@@ -170,6 +177,7 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
         <span onClick={openProjects}>Projects</span>
         <span onClick={openNewAgent}>Agents</span>
         <span onClick={openSearch}>Find</span>
+        <span onClick={openStandup}>Working On</span>
         <span onClick={() => (setMuted(!muted), setMutedState(!muted))}>{muted ? "🔇" : "🔊"}</span>
         <span onClick={() => (sfx.doorClose(), onSignOff())}>Sign Off</span>
       </div>
@@ -220,10 +228,24 @@ function BuddyGroup({ g, onIM, onInfo }: { g: Group; onIM: (n: string) => void; 
       <div className="group" onClick={() => setOpen(!open)}>{open ? "▾" : "▸"} {g.name} <span className="count">({online.length}/{g.buddies.length})</span></div>
       {open &&
         sorted.map((b) => (
-          <div key={b.screen_name} className={"buddy " + b.presence.state} onDoubleClick={() => onIM(b.screen_name)} onContextMenu={(e) => (e.preventDefault(), onInfo(b.screen_name))} title={b.presence.message ? `${b.presence.state}: ${b.presence.message}` : b.presence.state}>
-            <span className={"dot " + b.presence.state} />
-            <span className="name">{b.screen_name}</span>
-            {b.kind === "agent" && <span className="badge">{String(b.capabilities.model ?? "bot").replace(/^claude-/, "")}</span>}
+          <div key={b.screen_name}>
+            <div
+              className={"buddy " + b.presence.state}
+              onDoubleClick={() => onIM(b.screen_name)}
+              onContextMenu={(e) => (e.preventDefault(), onInfo(b.screen_name))}
+              title={b.activity?.headline ? `Working on: ${b.activity.headline}` : b.presence.message ? `${b.presence.state}: ${b.presence.message}` : b.presence.state}
+            >
+              <span className={"dot " + b.presence.state} />
+              <span className="name">{b.screen_name}</span>
+              {b.kind === "agent" && <span className="badge">{String(b.capabilities.model ?? "bot").replace(/^claude-/, "")}</span>}
+            </div>
+            {b.activity?.headline && (
+              <div className="worknote" onClick={() => onInfo(b.screen_name)} title="Click for details">
+                ⚙ {b.activity.headline}
+                {typeof b.activity.progress === "number" ? ` (${Math.round(b.activity.progress)}%)` : ""}
+                {b.activity.blockers?.length ? <span className="blocked"> ⚠ blocked</span> : null}
+              </div>
+            )}
           </div>
         ))}
     </div>
@@ -296,6 +318,11 @@ function Conversation({ client, me, conv, onClosed }: { client: BuddyList; me: {
       } else if (body.startsWith("/review ")) {
         const [repo, ref = "main"] = body.slice(8).trim().split(/[@\s]+/);
         await post({ body: `Review ${repo}@${ref}`, payload_type: "review.request", payload: { repo, ref } });
+      } else if (body.startsWith("/ask ") && conv.kind === "im") {
+        // Ask and surface the answer inline, falling back to the activity record.
+        const r = await client.api<{ answer: { from: string; body: string } | null; activity: { headline: string } | null }>("POST", `/users/${conv.peer}/ask`, { text: body.slice(5).trim(), wait_seconds: 30 });
+        if (!r.answer)
+          setMsgs((m) => [...m, { id: "sys" + Date.now(), conversation_id: conv.id, seq: -1, sender: "", body: r.activity ? `No reply yet. Currently working on: ${r.activity.headline}` : "No reply yet — the question is waiting in their IMs.", payload_type: "x-system", payload: null, reply_to: null, edited_at: null, deleted_at: null, ts: new Date().toISOString() }]);
       } else await post(body);
       sfx.sent();
     } catch (e) {
@@ -334,7 +361,7 @@ function Conversation({ client, me, conv, onClosed }: { client: BuddyList; me: {
         )}
       </div>
       <div className="typing">{typers.length ? `${typers.join(", ")} ${typers.length > 1 ? "are" : "is"} typing…` : ""}</div>
-      <textarea className="field composer" value={text} onChange={(e) => onType(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())} placeholder={conv.kind === "room" ? "Message… (/task, /ask, /review, /topic, /invite)" : "Message… (/task <title>, /ask <question>, /review <repo@ref>)"} />
+      <textarea className="field composer" value={text} onChange={(e) => onType(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())} placeholder={conv.kind === "room" ? "Message… (/task, /review, /topic, /invite)" : "Message… (/ask <question>, /task <title>, /review <repo@ref>)"} />
       <div className="row" style={{ justifyContent: "flex-end" }}>
         <button className="btn" onClick={send}>Send</button>
       </div>
@@ -386,10 +413,11 @@ function AwayDialog({ onSet }: { onSet: (s: "away" | "busy", m: string) => void 
   );
 }
 
-function Info({ u, onIM, onWarn }: { u: Buddy; onIM: () => void; onWarn: () => void }) {
+function Info({ client, u, onIM, onWarn }: { client: BuddyList; u: Buddy; onIM: () => void; onWarn: () => void }) {
   const c = u.capabilities;
   return (
     <div className="body">
+      <WorkingOn client={client} screenName={u.screen_name} />
       <dl className="info">
         <dt>Screen name</dt><dd><b>{u.screen_name}</b> <span style={{ color: "#666" }}>#{u.uin}</span></dd>
         <dt>Type</dt><dd>{u.kind}</dd>
@@ -403,6 +431,189 @@ function Info({ u, onIM, onWarn }: { u: Buddy; onIM: () => void; onWarn: () => v
         {u.profile?.bio ? <><dt>Bio</dt><dd>{u.profile.bio}</dd></> : null}
       </dl>
       <div className="actions"><button className="btn" onClick={onWarn}>Warn</button><button className="btn" onClick={onIM}>Send IM</button></div>
+    </div>
+  );
+}
+
+/**
+ * "What are you working on?" — reads the agent's live activity record (no interruption needed),
+ * and offers an Ask box that sends a real question and waits inline for the answer.
+ */
+function WorkingOn({ client, screenName }: { client: BuddyList; screenName: string }) {
+  const [view, setView] = useState<ActivityView>();
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [answer, setAnswer] = useState<{ from: string; body: string } | null>(null);
+  const [note, setNote] = useState<string>();
+
+  const load = useCallback(
+    () => client.api<ActivityView>("GET", `/users/${screenName}/activity`).then(setView).catch(() => {}),
+    [client, screenName],
+  );
+  useEffect(() => {
+    void load();
+    const off = client.on("activity", (f) => {
+      if (f.data.screen_name === screenName) void load();
+    });
+    const t = setInterval(load, 15_000);
+    return () => {
+      off();
+      clearInterval(t);
+    };
+  }, [client, screenName, load]);
+
+  const ask = async () => {
+    const text = question.trim();
+    if (!text) return;
+    setAsking(true);
+    setAnswer(null);
+    setNote(undefined);
+    try {
+      const r = await client.api<{ answer: { from: string; body: string } | null }>("POST", `/users/${screenName}/ask`, { text, wait_seconds: 30 });
+      if (r.answer) {
+        setAnswer(r.answer);
+        sfx.im();
+      } else {
+        setNote(`${screenName} didn't answer within 30s — the question is waiting in their IMs.`);
+      }
+      setQuestion("");
+    } catch (e) {
+      setNote((e as Error).message);
+      sfx.uhoh();
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  const a = view?.activity;
+  return (
+    <div className="workpanel">
+      <div className="worktitle">⚙ Working on{view?.stale ? <span className="stale"> (no update in 15m)</span> : null}</div>
+      {a ? (
+        <>
+          <div className="workhead">{a.headline}</div>
+          {a.step && <div className="workstep">{a.step}</div>}
+          {typeof a.progress === "number" && (
+            <div className="bar" role="progressbar" aria-valuenow={Math.round(a.progress)} aria-valuemin={0} aria-valuemax={100}>
+              <span style={{ width: `${Math.max(0, Math.min(100, a.progress))}%` }} />
+              <em>{Math.round(a.progress)}%</em>
+            </div>
+          )}
+          {a.detail && <div className="workdetail">{a.detail}</div>}
+          {a.blockers?.length ? <div className="blockers">⚠ Blocked: {a.blockers.join("; ")}</div> : null}
+          <div className="workmeta">
+            {a.project ? `#${a.project}` : ""}
+            {a.started_at ? ` · since ${new Date(a.started_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}
+            {a.eta ? ` · eta ${new Date(a.eta).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}
+          </div>
+        </>
+      ) : (
+        <div className="workdetail">Nothing reported. {view?.presence.state === "offline" ? "They're offline." : "Ask them below."}</div>
+      )}
+      {view?.recent_work?.length ? (
+        <details className="recent">
+          <summary>Recent work ({view.recent_work.length})</summary>
+          {view.recent_work.map((r, i) => (
+            <div key={i} className="recentrow"><span className="badge">{r.payload_type}</span> {r.body || <em>(no text)</em>}</div>
+          ))}
+        </details>
+      ) : null}
+      <div className="row">
+        <input
+          className="field"
+          placeholder={`Ask ${screenName} a question…`}
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && ask()}
+          disabled={asking}
+        />
+        <button className="btn" onClick={ask} disabled={asking || !question.trim()}>{asking ? "Asking…" : "Ask"}</button>
+      </div>
+      {answer && <div className="answer"><b>{answer.from}:</b> {answer.body}</div>}
+      {note && <div className="workdetail" style={{ color: "#a60" }}>{note}</div>}
+    </div>
+  );
+}
+
+/** Project-wide standup: what every agent and human on a project is doing right now. */
+function StandupWindow({ client, onAsk, onIM }: { client: BuddyList; onAsk: (n: string) => void; onIM: (n: string) => void }) {
+  const [projects, setProjects] = useState<Array<{ slug: string; name: string }>>([]);
+  const [slug, setSlug] = useState<string>("");
+  const [data, setData] = useState<Standup>();
+  const [err, setErr] = useState<string>();
+
+  useEffect(() => {
+    void client.projects().then((p) => {
+      setProjects(p);
+      setSlug((cur) => cur || (p[0]?.slug ?? ""));
+    });
+  }, [client]);
+
+  const load = useCallback(async () => {
+    if (!slug) return;
+    try {
+      setData(await client.api<Standup>("GET", `/projects/${slug}/activity`));
+      setErr(undefined);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }, [client, slug]);
+  useEffect(() => {
+    void load();
+    const off = client.on("activity", () => void load());
+    const t = setInterval(load, 10_000);
+    return () => {
+      off();
+      clearInterval(t);
+    };
+  }, [client, load]);
+
+  const busy = data?.members.filter((m) => m.activity) ?? [];
+  const idle = data?.members.filter((m) => !m.activity) ?? [];
+  const blocked = busy.filter((m) => m.activity?.blockers?.length);
+
+  return (
+    <div className="body">
+      <div className="row">
+        <select className="field" value={slug} onChange={(e) => setSlug(e.target.value)}>
+          {projects.map((p) => <option key={p.slug} value={p.slug}>{p.name}</option>)}
+        </select>
+        <button className="btn" onClick={load}>Refresh</button>
+      </div>
+      {err && <div style={{ color: "#c00" }}>{err}</div>}
+      {blocked.length > 0 && <div className="blockers">⚠ {blocked.length} blocked: {blocked.map((m) => m.screen_name).join(", ")}</div>}
+      <div className="sunken" style={{ flex: 1, padding: 4 }}>
+        {busy.map((m) => (
+          <div key={m.screen_name} className="standrow">
+            <div className="row" style={{ gap: 4 }}>
+              <span className={"dot " + m.presence.state} />
+              <b>{m.screen_name}</b>
+              <span className="badge">{m.role}</span>
+              <span style={{ flex: 1 }} />
+              <button className="btn" onClick={() => onAsk(m.screen_name)}>Ask</button>
+              <button className="btn" onClick={() => onIM(m.screen_name)}>IM</button>
+            </div>
+            <div className="workhead">{m.activity!.headline}</div>
+            {m.activity!.step && <div className="workstep">{m.activity!.step}</div>}
+            {typeof m.activity!.progress === "number" && (
+              <div className="bar"><span style={{ width: `${m.activity!.progress}%` }} /><em>{Math.round(m.activity!.progress)}%</em></div>
+            )}
+            {m.activity!.blockers?.length ? <div className="blockers">⚠ {m.activity!.blockers.join("; ")}</div> : null}
+          </div>
+        ))}
+        {busy.length === 0 && <div style={{ color: "#666", padding: 4 }}>Nobody has reported what they're working on.</div>}
+        {idle.length > 0 && (
+          <div className="standrow idlerow">
+            <span style={{ color: "#666" }}>Not working on anything: </span>
+            {idle.map((m) => (
+              <span key={m.screen_name} className="idlechip" onClick={() => onAsk(m.screen_name)} title="Ask them">
+                <span className={"dot " + m.presence.state} />{m.screen_name}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="workmeta">{data ? `as of ${new Date(data.as_of).toLocaleTimeString()}` : ""}</div>
     </div>
   );
 }

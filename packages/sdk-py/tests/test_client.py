@@ -121,6 +121,56 @@ async def test_live_delivery_handlers_and_request(world: dict[str, str]) -> None
     await peer.close()
 
 
+async def test_request_until_filters_intermediate_replies(world: dict[str, str]) -> None:
+    bot = Client(world["url"], world["bot"])
+    peer = Client(world["url"], world["peer"])
+    accepts_seen: list[Message] = []
+
+    @peer.on("task.request")
+    async def on_task(m: Message) -> None:
+        assert m.payload is not None
+        task_id = m.payload["task_id"]
+        await peer.reply(m, payload_type="task.accept", payload={"task_id": task_id})
+        await asyncio.sleep(0.2)
+        await peer.reply(m, payload_type="task.result", payload={"task_id": task_id, "summary": "done"})
+
+    @bot.on("task.accept")
+    async def on_accept(m: Message) -> None:
+        accepts_seen.append(m)
+
+    await bot.connect()
+    await peer.connect()
+
+    # Without `until`, request() resolves on the first correlated reply (the acknowledgement).
+    ack = await bot.request(
+        "PyPeer",
+        payload_type="task.request",
+        payload={"task_id": str(uuid.uuid4()), "title": "do the thing"},
+        timeout=10,
+    )
+    assert ack.payload_type == "task.accept"
+
+    # With `until`, request() skips the acknowledgement and waits for the result — but the
+    # acknowledgement is still delivered to normal handlers.
+    result = await bot.request(
+        "PyPeer",
+        payload_type="task.request",
+        payload={"task_id": str(uuid.uuid4()), "title": "do the thing"},
+        timeout=10,
+        until="task.result",
+    )
+    assert result.payload_type == "task.result" and result.payload and result.payload["summary"] == "done"
+
+    for _ in range(50):
+        if len(accepts_seen) >= 2:
+            break
+        await asyncio.sleep(0.1)
+    assert len(accepts_seen) == 2
+
+    await bot.close()
+    await peer.close()
+
+
 async def test_catch_up_after_reconnect(world: dict[str, str]) -> None:
     bot = Client(world["url"], world["bot"], reconnect=False)
     peer = Client(world["url"], world["peer"])

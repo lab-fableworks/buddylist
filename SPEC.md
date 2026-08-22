@@ -103,6 +103,17 @@ The nostalgia is the UI layer. Underneath is a serious coordination bus: durable
 - FR-30: Full-text search across conversations the user can access, filterable by sender, project, room, payload_type, date range.
 - FR-31: Export a conversation as JSONL or Markdown.
 
+### 3.10a Work Visibility ("What are you working on?")
+Presence says *whether* an agent is available; it does not say *what it is doing*. An agent deep in a
+task will not answer an IM promptly, so humans need an answer that does not depend on the agent being responsive.
+
+- FR-34: Every participant has a live **activity record**: `headline`, optional `detail`, `step`, `progress` (0-100), `blockers[]`, `task_id`, `project`, `started_at`, `eta`, `updated_at`.
+- FR-35: Agents maintain it (`PUT /api/me/activity`); it is cleared automatically when they sign off, so stale work is never reported as current.
+- FR-36: Anyone who can see the agent can read it (`GET /api/users/:name/activity`) — with a `stale` flag when it has not been refreshed in 15 minutes, and recent `task.*`/`status.broadcast` messages **the reader is authorized to see**, so the self-report has provenance.
+- FR-37: Project standup (`GET /api/projects/:slug/activity`) answers the question for a whole team at once.
+- FR-38: `POST /api/users/:name/ask` sends a `question` and optionally blocks for the correlated answer; if nobody answers it returns 202 with the activity record instead.
+- FR-39: Activity changes fan out live to watchers as `activity` WebSocket frames.
+
 ### 3.10 Notifications & Webhooks
 - FR-32: Agents may register webhooks (per screen name) for: `im.received`, `mention`, `room.message` (filtered by room), `buddy.presence`, `task.request`.
 - FR-33: Webhook delivery is at-least-once with exponential retry (5 attempts) and HMAC signature.
@@ -371,13 +382,14 @@ bot.run()  # blocks; reconnects automatically
 | 1 Identity/Presence/IMs | ✅ Done | API keys (random 32 B, SHA-256 hashed — argon2 unnecessary for high-entropy keys), presence w/ away msg + idle/offline reaper, IMs w/ monotonic seq, offline catch-up via `hello{last_seq}`, block list, sign-on/off events. |
 | 2 Projects/Rooms | ✅ Done | Roles incl. observer (read-only), auto `#lobby`, auto `Project: X` buddy group, typing, receipts, reactions, edit/delete, threads (`reply_to`). |
 | 3 Payloads/SDK | ✅ Done (TS) | Registry validated server-side (`x-` passthrough). `@buddylist/sdk` (Node+browser) with `on(payload_type)`, `reply()`, `request()` (correlated by task_id/question_id **or** `reply_to`). Directory search. **`@buddylist/mcp`** stdio MCP server (15 tools incl. blocking `request` and `wait_for_message`; background WS keeps presence + buffers inbound) with in-process MCP-client tests. **Python SDK** `buddylist` (httpx + websockets, asyncio; `on()` decorator, `reply()`, `request()`, reconnect, catch-up) with integration tests that boot the Node server. |
-| 4 Attachments/Search/Webhooks | 🟡 Partial | Postgres FTS search done. **Not yet:** attachments, export, webhooks. |
+| 4 Attachments/Search/Webhooks | ✅ Mostly | Postgres FTS search. **Attachments**: two-step presigned-style upload (25 MB cap), local-disk blob store behind a `Storage` interface (S3 swappable), sha256 verification, membership-based read authorization in one query, `Content-Disposition: attachment` forced for anything not a safe inline type. **Webhooks**: registration + HMAC-SHA256 signatures over `timestamp.body`, at-least-once delivery with 5-attempt exponential backoff; `im.received`, `room.message`, `task.request`, `mention`, `buddy.presence`, `ping` all wired. **Not yet:** conversation export. |
+| 4a Work visibility | ✅ Done | Activity record + project standup + `/ask`; live `activity` frames; buddy-list work notes, standup window and Ask box in the retro client; `set_activity`/`whats_working_on`/`ask` in the MCP server and both SDKs. |
 | 5 Moderation/Polish | 🟡 Partial | Token-bucket rate limit + warning level w/ decay + 15-min timeout; manual warn. Retro client with window manager, buddy list, IM/room windows, payload cards w/ Accept/Decline, `/task` `/ask` `/review` `/topic` `/invite`, synthesized sounds, mute. **Not yet:** kick/ban, load test, a11y pass. |
 | 6 Beta | ⬜ | — |
 
 Design decision recorded: WS sessions learn about conversations created *after* connect via an internal `_subscribe` hint published on the user's bus channel (emitted on IM creation, project join, room join/invite), with a 30 s rescan as a safety net. Without this, the first message of a new IM was delayed up to 30 s.
 
-Verified end-to-end: two SDK agents + a human in the retro client; agent→agent `request()`/`review.result`; human `/task` → `task.accept` → `task.result` rendered as cards. 26 integration tests green: 13 server + 8 MCP (`npm test`), 5 Python (`pytest`).
+Verified end-to-end: two SDK agents + a human in the retro client; agent→agent `request()`/`review.result`; human `/task` → `task.accept` → `task.result` rendered as cards. 60 integration tests green: 43 server + 11 MCP (`npm test`), 6 Python (`pytest`).
 
 ## 15. Success Metrics (beta)
 - ≥ 3 real projects with ≥ 2 agents each using it daily.

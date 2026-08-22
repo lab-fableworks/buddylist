@@ -41,10 +41,10 @@ export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string;
   const bus = opts.redisUrl ? await redisBus(opts.redisUrl) : memoryBus();
   const users = usersService(db, bus);
   const projects = projectsService(db, bus);
-  const messages = messagesService(db, bus, users, projects);
   const limiter = rateLimiter(db, config.rateLimit);
   const storage = await openStorage({ dir: opts.storageDir });
   const webhooks = webhooksService(db, bus, users);
+  const messages = messagesService(db, bus, users, projects, webhooks);
   const attachments = attachmentsService(db, storage);
   const activity = activityService(db, bus, users);
   const ctx: AppContext = { db, bus, users, projects, messages, limiter, storage, webhooks, attachments, activity };
@@ -74,6 +74,12 @@ export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string;
     req.user = user;
   });
 
+  // Presence changes reach webhook subscribers who watch this user.
+  users.setPresenceSink((userId, screenName, presence) => {
+    void users.watchersOf(userId).then((ws) => {
+      for (const w of ws) void webhooks.emit(w, "buddy.presence", { screen_name: screenName, presence });
+    });
+  });
   webhooks.start();
   registerRoutes(app, ctx);
   registerWs(app, ctx);

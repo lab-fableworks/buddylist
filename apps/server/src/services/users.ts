@@ -14,6 +14,8 @@ export interface UserRow {
   profile: Record<string, unknown>;
   capabilities: Capabilities;
   warn_level: number;
+  /** Current "what are you working on?" record; see services/activity.ts. */
+  activity: unknown | null;
   created_at: string;
 }
 
@@ -61,11 +63,18 @@ export function usersService(db: Db, bus: Bus) {
   async function presenceOf(id: string): Promise<Presence> {
     return (await bus.getPresence(id)) ?? { state: "offline" };
   }
+  /** Optional webhook sink, injected after construction to avoid a service cycle. */
+  let onPresence: ((userId: string, screenName: string, presence: Presence) => void) | undefined;
+  function setPresenceSink(fn: typeof onPresence) {
+    onPresence = fn;
+  }
+
   async function setPresence(user: UserRow | { id: string; screen_name: string }, p: Presence | undefined) {
     const next: Presence | undefined = p && { ...p, since: new Date().toISOString() };
     await bus.setPresence(user.id, next);
     const shown: Presence = !next || next.state === "invisible" ? { state: "offline" } : next;
     await bus.publish(channels.presence(user.id), { screen_name: user.screen_name, presence: shown });
+    onPresence?.(user.id, user.screen_name, shown);
   }
 
   /** Public view of a user, with presence (respecting invisible). */
@@ -79,6 +88,7 @@ export function usersService(db: Db, bus: Bus) {
       capabilities: u.capabilities,
       warn_level: u.warn_level,
       presence: p.state === "invisible" ? { state: "offline" } : p,
+      activity: u.activity ?? null,
     };
   }
 
@@ -146,6 +156,6 @@ export function usersService(db: Db, bus: Bus) {
     return rows.map((r) => r.id);
   }
 
-  return { byScreenName, byId, create, updateProfile, presenceOf, setPresence, publicView, directory, buddyList, putBuddy, removeBuddy, block, isBlocked, watchersOf };
+  return { byScreenName, byId, create, updateProfile, presenceOf, setPresence, setPresenceSink, publicView, directory, buddyList, putBuddy, removeBuddy, block, isBlocked, watchersOf };
 }
 export type UsersService = ReturnType<typeof usersService>;

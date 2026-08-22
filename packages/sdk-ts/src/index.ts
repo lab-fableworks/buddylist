@@ -36,7 +36,10 @@ export class BuddyList {
   private frameHandlers = new Map<string, Set<(f: ServerFrame) => unknown>>();
   private payloadHandlers = new Map<string, Set<MessageHandler>>();
   private lastSeq = new Map<string, number>();
-  private pending = new Map<string, { resolve: (m: Message) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private pending = new Map<
+    string,
+    { resolve: (m: Message) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; until?: Set<string> }
+  >();
   private pendingByMsg = new Map<string, string>(); // sent message id -> correlation key (for reply_to matching)
   private closed = false;
   private backoff = 1000;
@@ -65,6 +68,37 @@ export class BuddyList {
       return Promise.resolve();
     }
     return this.api("PUT", "/me/presence", { state, message, expected_back });
+  }
+  /**
+   * Report what you are working on. Humans read this without interrupting you —
+   * keep it current (call it when the job or step changes), and clear it when done.
+   */
+  setActivity(activity: {
+    headline: string;
+    detail?: string;
+    step?: string;
+    progress?: number;
+    blockers?: string[];
+    task_id?: string;
+    project?: string;
+    eta?: string;
+  }) {
+    return this.api("PUT", "/me/activity", activity);
+  }
+  clearActivity() {
+    return this.api("DELETE", "/me/activity");
+  }
+  /** Ask what someone else is working on (their live record + recent task messages). */
+  activityOf(screenName: string) {
+    return this.api<{ screen_name: string; presence: Presence; activity: Record<string, unknown> | null; stale: boolean; recent_work: Array<{ payload_type: string; body: string; ts: string }> }>("GET", `/users/${screenName}/activity`);
+  }
+  /** Everyone on a project and what they're doing right now. */
+  standup(projectSlug: string) {
+    return this.api<{ project: string; as_of: string; members: Array<{ screen_name: string; kind: string; role: string; presence: Presence; activity: Record<string, unknown> | null }> }>("GET", `/projects/${projectSlug}/activity`);
+  }
+  /** Ask someone a question and optionally wait for their answer (no socket required). */
+  ask(screenName: string, text: string, waitSeconds = 30) {
+    return this.api<{ question_id: string; conversation_id: string; answer: { from: string; body: string } | null; activity: Record<string, unknown> | null }>("POST", `/users/${screenName}/ask`, { text, wait_seconds: waitSeconds });
   }
   updateProfile(patch: { profile?: Record<string, unknown>; capabilities?: Record<string, unknown> }) {
     return this.api("PATCH", "/me/profile", patch);
@@ -134,17 +168,26 @@ export class BuddyList {
   /**
    * Send a task/question to a peer and await the correlated reply.
    * Correlation: a reply whose payload carries the same task_id/question_id, or whose reply_to points at the request message.
+   * By default resolves on the *first* correlated reply (e.g. task.accept). Pass `until` (a payload_type or list of
+   * them) to instead wait for the first correlated reply matching one of those types — earlier correlated replies
+   * are ignored by request() but still delivered to any `on(...)` handlers.
    */
-  request(screenName: string, input: Partial<SendMessage> & { payload: Record<string, unknown> }, timeoutMs = 5 * 60_000): Promise<Message> {
+  request(
+    screenName: string,
+    input: Partial<SendMessage> & { payload: Record<string, unknown>; until?: string | string[] },
+    timeoutMs = 5 * 60_000,
+  ): Promise<Message> {
     const key = (input.payload.task_id ?? input.payload.question_id) as string | undefined;
     if (!key) throw new Error("request() needs payload.task_id or payload.question_id for correlation");
+    const { until, ...body } = input;
+    const untilSet = until == null ? undefined : new Set(Array.isArray(until) ? until : [until]);
     return new Promise<Message>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(key);
         reject(new Error(`request ${key} timed out`));
       }, timeoutMs);
-      this.pending.set(key, { resolve, reject, timer });
-      this.im(screenName, input)
+      this.pending.set(key, { resolve, reject, timer, until: untilSet });
+      this.im(screenName, body)
         .then((sent) => this.pendingByMsg.set(sent.id, key))
         .catch((e) => {
           clearTimeout(timer);
@@ -177,7 +220,9 @@ export class BuddyList {
       const key = ((p?.task_id ?? p?.question_id) as string | undefined) ?? (m.reply_to ? this.pendingByMsg.get(m.reply_to) : undefined);
       const pend = key ? this.pending.get(key) : undefined;
       // Don't resolve on the original request itself, only on replies.
-      if (pend && !/\.request$|^question$/.test(m.payload_type)) {
+      // If `until` was given, ignore correlated replies that don't match one of those payload_types
+      // (they're still delivered to normal handlers below).
+      if (pend && !/\.request$|^question$/.test(m.payload_type) && (!pend.until || pend.until.has(m.payload_type))) {
         clearTimeout(pend.timer);
         this.pending.delete(key!);
         for (const [id, k] of this.pendingByMsg) if (k === key) this.pendingByMsg.delete(id);

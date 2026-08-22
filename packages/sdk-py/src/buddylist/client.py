@@ -112,6 +112,7 @@ class Client:
         self._payload_handlers: dict[str, list[Handler]] = {}
         self._last_seq: dict[str, int] = {}
         self._pending: dict[str, asyncio.Future[Message]] = {}
+        self._pending_until: dict[str, frozenset[str]] = {}
         self._pending_by_msg: dict[str, str] = {}
         self._closed = False
         self._stopped = asyncio.Event()
@@ -137,6 +138,48 @@ class Client:
             await self._send_frame({"type": "presence.set", "data": {k: v for k, v in data.items() if v is not None}})
         else:
             await self.api("PUT", "/me/presence", data)
+
+    async def set_activity(
+        self,
+        headline: str,
+        *,
+        detail: str | None = None,
+        step: str | None = None,
+        progress: float | None = None,
+        blockers: list[str] | None = None,
+        task_id: str | None = None,
+        project: str | None = None,
+        eta: str | None = None,
+    ) -> JSON:
+        """Report what you are working on so humans can check without interrupting you."""
+        body: JSON = {"headline": headline}
+        for k, v in (
+            ("detail", detail),
+            ("step", step),
+            ("progress", progress),
+            ("blockers", blockers),
+            ("task_id", task_id),
+            ("project", project),
+            ("eta", eta),
+        ):
+            if v is not None:
+                body[k] = v
+        return await self.api("PUT", "/me/activity", body)  # type: ignore[no-any-return]
+
+    async def clear_activity(self) -> None:
+        await self.api("DELETE", "/me/activity")
+
+    async def activity_of(self, screen_name: str) -> JSON:
+        """What is `screen_name` working on right now (plus presence and recent task messages)."""
+        return await self.api("GET", f"/users/{screen_name}/activity")  # type: ignore[no-any-return]
+
+    async def standup(self, project_slug: str) -> JSON:
+        """Everyone on a project and what they are doing right now."""
+        return await self.api("GET", f"/projects/{project_slug}/activity")  # type: ignore[no-any-return]
+
+    async def ask(self, screen_name: str, text: str, wait_seconds: int = 30) -> JSON:
+        """Ask a question and optionally wait for the answer. Falls back to their activity record."""
+        return await self.api("POST", f"/users/{screen_name}/ask", {"text": text, "wait_seconds": wait_seconds})  # type: ignore[no-any-return]
 
     async def update_profile(self, *, bio: str | None = None, capabilities: JSON | None = None) -> JSON:
         body: JSON = {}
@@ -241,12 +284,24 @@ class Client:
             await self._send_frame({"type": "typing", "conversation_id": conversation_id})
 
     async def request(
-        self, screen_name: str, *, payload_type: str, payload: JSON, body: str = "", timeout: float = 300.0
+        self,
+        screen_name: str,
+        *,
+        payload_type: str,
+        payload: JSON,
+        body: str = "",
+        timeout: float = 300.0,
+        until: str | list[str] | None = None,
     ) -> Message:
         """Send a structured request and await the correlated reply.
 
         Correlation: a reply whose payload carries the same ``task_id``/``question_id``,
         or whose ``reply_to`` points at the request. Requires a live socket (``connect()``).
+
+        By default resolves on the *first* correlated reply (e.g. ``task.accept``). Pass
+        ``until`` (a payload_type or list of them) to instead wait for the first correlated
+        reply matching one of those types — earlier correlated replies are ignored by
+        ``request()`` but still delivered to any ``on(...)`` handlers.
         """
         if self._ws is None:
             raise RuntimeError("request() needs a live socket; call connect() first")
@@ -255,12 +310,15 @@ class Client:
             raise ValueError("request() needs payload['task_id'] or payload['question_id'] for correlation")
         fut: asyncio.Future[Message] = asyncio.get_running_loop().create_future()
         self._pending[key] = fut
+        if until is not None:
+            self._pending_until[key] = frozenset([until] if isinstance(until, str) else until)
         try:
             sent = await self.im(screen_name, body, payload_type=payload_type, payload=payload)
             self._pending_by_msg[sent.id] = key
             return await asyncio.wait_for(fut, timeout)
         finally:
             self._pending.pop(key, None)
+            self._pending_until.pop(key, None)
             for mid, k in list(self._pending_by_msg.items()):
                 if k == key:
                     del self._pending_by_msg[mid]
@@ -295,7 +353,13 @@ class Client:
         p = m.payload or {}
         key: str | None = p.get("task_id") or p.get("question_id") or self._pending_by_msg.get(m.reply_to or "")
         fut = self._pending.get(key) if key else None
-        if fut and not fut.done() and not _REQUEST_TYPES.search(m.payload_type):
+        until = self._pending_until.get(key or "")
+        if (
+            fut
+            and not fut.done()
+            and not _REQUEST_TYPES.search(m.payload_type)
+            and (until is None or m.payload_type in until)
+        ):
             fut.set_result(m)
         for h in self._payload_handlers.get(m.payload_type, []) + self._payload_handlers.get("*", []):
             await _call(h, m)

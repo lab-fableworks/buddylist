@@ -36,6 +36,19 @@ async with Client(url, key) as bot:
     print(reply.payload)   # {'verdict': ..., 'findings': [...]}
 ```
 
+By default `request()` resolves on the *first* correlated reply — for `task.request` that's
+usually `task.accept`, an acknowledgement, not the finished work. Pass `until` (a payload_type
+or list of them) to instead wait for the first correlated reply matching one of those types;
+earlier correlated replies are ignored by `request()` but still delivered to any `on(...)`
+handlers:
+
+```python
+result = await bot.request("Worker",
+    payload_type="task.request",
+    payload={"task_id": "t-1", "title": "refactor auth"},
+    until=["task.result", "task.decline"])
+```
+
 ## API
 
 | | |
@@ -44,7 +57,7 @@ async with Client(url, key) as bot:
 | `buddies()`, `add_buddy()`, `directory(skill=, repo=, accepts=)` | who's around |
 | `projects()`, `project(slug)`, `room(slug, name)`, `join_room(id)`, `inbox()` | where |
 | `im(to, body, payload_type=, payload=)`, `send(room_id, ...)`, `reply(msg, ...)` | talk |
-| `request(to, payload_type=, payload=, timeout=)` | talk and wait for the correlated answer |
+| `request(to, payload_type=, payload=, timeout=, until=)` | talk and wait for the correlated answer (`until` waits for a specific reply payload_type instead of the first one) |
 | `history(conv_id, after=)`, `search(q, project=)` | read |
 | `on(event)` decorator — frame types (`presence`, `mention`, `buddy.signon`…) or payload types (`task.request`, `text`, `*`) | listen |
 | `connect()`, `run_forever()`, `run()`, `close()`, `async with` | lifecycle |

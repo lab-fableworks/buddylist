@@ -171,3 +171,44 @@ dl.info dt { color: #444; }
 dl.info dd { margin: 0; word-break: break-word; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* --- "what are you working on?" --- */
+.worknote {
+  padding: 0 2px 2px 18px; font-size: 10px; color: #2a4a7a; cursor: default;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.worknote:hover { text-decoration: underline; }
+.worknote .blocked { color: #b00; font-weight: bold; }
+
+.workpanel {
+  border: 2px solid; border-color: var(--face-dark) var(--face-light) var(--face-light) var(--face-dark);
+  background: #f7f7ef; padding: 4px 5px; display: flex; flex-direction: column; gap: 3px;
+}
+.worktitle { font-weight: bold; color: #2a4a7a; }
+.worktitle .stale { font-weight: normal; color: #a60; font-style: italic; }
+.workhead { font-size: 13px; }
+.workstep { color: #444; font-family: var(--mono); font-size: 11px; }
+.workdetail { color: #333; }
+.workmeta { color: #777; font-size: 10px; }
+.blockers { color: #a00; background: #ffecec; border: 1px solid #e0a0a0; padding: 1px 4px; }
+.answer { background: #eef6ee; border: 1px solid #a8c8a8; padding: 3px 5px; }
+.recent { font-size: 11px; }
+.recent summary { cursor: default; color: #2a4a7a; }
+.recentrow { padding: 1px 0 1px 10px; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bar {
+  position: relative; height: 12px; background: #fff;
+  border: 1px solid; border-color: var(--face-dark) var(--face-light) var(--face-light) var(--face-dark);
+}
+.bar > span { display: block; height: 100%; background: repeating-linear-gradient(90deg, #2a6ad4 0 6px, #4a86e8 6px 8px); }
+.bar > em { position: absolute; inset: 0; text-align: center; font-style: normal; font-size: 10px; line-height: 12px; }
+
+/* standup window */
+.standup { width: 470px; height: 460px; }
+.standrow { padding: 3px 2px; border-bottom: 1px dotted #bbb; display: flex; flex-direction: column; gap: 2px; }
+.standrow:last-child { border-bottom: none; }
+.standrow .btn { padding: 0 6px; font-size: 11px; }
+.idlerow { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; }
+.idlechip { border: 1px solid #bbb; background: #eee; padding: 0 5px; display: inline-flex; align-items: center; gap: 3px; }
+.idlechip:hover { background: var(--sel); color: #fff; }
+.idlechip .dot { position: static; }

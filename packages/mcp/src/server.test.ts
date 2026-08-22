@@ -40,6 +40,13 @@ beforeAll(async () => {
   peer.on("question", async (m) => {
     await peer.reply(m, { body: "42", payload_type: "answer", payload: { question_id: (m.payload as { question_id: string }).question_id, text: "42" } });
   });
+  peer.on("task.request", async (m) => {
+    const taskId = (m.payload as { task_id: string }).task_id;
+    await peer.reply(m, { payload_type: "task.accept", payload: { task_id: taskId } });
+    setTimeout(() => {
+      void peer.reply(m, { payload_type: "task.result", payload: { task_id: taskId, summary: "done" } });
+    }, 200);
+  });
   await peer.connect();
 
   botHandle = await createBuddyListMcp({ url, apiKey: bot.api_key });
@@ -59,7 +66,7 @@ afterAll(async () => {
 describe("buddylist-mcp", () => {
   it("lists tools with instructions", async () => {
     const tools = (await mcp.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(["check_messages", "directory", "history", "im_history", "inbox", "join_room", "project", "request", "search", "send_im", "send_message", "set_presence", "update_profile", "wait_for_message", "whoami"]);
+    expect(tools).toEqual(["ask", "check_messages", "clear_activity", "directory", "history", "im_history", "inbox", "join_room", "project", "request", "search", "send_im", "send_message", "set_activity", "set_presence", "update_profile", "wait_for_message", "whats_working_on", "whoami"].sort());
     expect(mcp.getInstructions()).toContain("McpBot");
   });
 
@@ -91,6 +98,42 @@ describe("buddylist-mcp", () => {
     expect(r.isError).toBe(false);
     expect(r.json.payload_type).toBe("answer");
     expect(r.json.payload.text).toBe("42");
+  });
+
+  it("request() without `until` resolves on the first correlated reply (the acknowledgement)", async () => {
+    const r = await call("request", { to: "PeerBot", payload_type: "task.request", payload: { task_id: "t1", title: "do the thing" }, timeout_seconds: 10 });
+    expect(r.isError).toBe(false);
+    expect(r.json.payload_type).toBe("task.accept");
+  });
+
+  it("request() with `until` skips the acknowledgement and waits for the result", async () => {
+    const r = await call("request", { to: "PeerBot", payload_type: "task.request", payload: { task_id: "t2", title: "do the thing" }, timeout_seconds: 10, until: ["task.result"] });
+    expect(r.isError).toBe(false);
+    expect(r.json.payload_type).toBe("task.result");
+    expect(r.json.payload.summary).toBe("done");
+  });
+
+  it("reports and reads activity, and asks a question", async () => {
+    const set = await call("set_activity", { headline: "Indexing the archive", step: "shard 2/5", progress: 40, blockers: ["disk almost full"] });
+    expect(set.isError).toBe(false);
+    expect(set.json.headline).toBe("Indexing the archive");
+
+    // another agent can see it without interrupting
+    const seen = await call("whats_working_on", { who: "McpBot" });
+    expect(seen.json.activity.headline).toBe("Indexing the archive");
+    expect(seen.json.activity.blockers).toEqual(["disk almost full"]);
+
+    // project-wide view
+    const team = await call("whats_working_on", { project: "atlas" });
+    expect(team.json.members.some((m: { screen_name: string }) => m.screen_name === "McpBot")).toBe(true);
+
+    // ask a live agent that answers questions
+    const answered = await call("ask", { who: "PeerBot", text: "meaning of life?", wait_seconds: 15 });
+    expect(answered.json.answer.from).toBe("PeerBot");
+    expect(answered.json.answer.body).toBe("42");
+
+    expect((await call("clear_activity")).json.ok).toBe(true);
+    expect((await call("whats_working_on", { who: "McpBot" })).json.activity).toBeNull();
   });
 
   it("check_messages drains the buffer and flags mentions", async () => {
