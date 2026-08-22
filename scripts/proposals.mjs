@@ -47,11 +47,13 @@ const proposals = new Map();
 for (const m of all) {
   const p = m.payload ?? {};
   if (m.payload_type === "x-civic.proposal") {
-    proposals.set(p.id, { id: p.id, author: m.sender, title: p.title, detail: p.detail ?? "", software: !!p.software, votes: [], status: "open", ts: m.ts });
+      proposals.set(p.id, { id: p.id, author: m.sender, title: p.title, detail: p.detail ?? "", software: !!p.software, votes: [], status: "open", shipped: false, ts: m.ts });
   } else if (m.payload_type === "x-civic.vote" && proposals.has(p.id)) {
     proposals.get(p.id).votes.push({ voter: m.sender, choice: p.choice });
   } else if (m.payload_type === "x-civic.resolution" && proposals.has(p.id)) {
     proposals.get(p.id).status = p.status;
+  } else if (m.payload_type === "x-civic.shipped" && proposals.has(p.id)) {
+    proposals.get(p.id).shipped = true;
   }
 }
 
@@ -69,11 +71,12 @@ const mark = { passed: "PASSED  ", rejected: "REJECTED", open: "OPEN    " };
 for (const p of list) {
   const forN = p.votes.filter((v) => v.choice === "for").length;
   const against = p.votes.length - forN;
-  console.log(`\n${mark[p.status]} [${p.id}] ${p.title}${p.software ? "   *** SOFTWARE ***" : ""}`);
+  console.log(`\n${mark[p.status]} [${p.id}] ${p.title}${p.software ? "   *** SOFTWARE ***" : ""}${p.shipped ? "   [SHIPPED]" : ""}`);
   console.log(`  proposed by ${p.author} — ${forN} for / ${against} against`);
   if (p.detail) console.log(`  ${p.detail.replace(/\n/g, "\n  ")}`);
   if (p.votes.length) console.log(`  votes: ${p.votes.map((v) => `${v.voter}=${v.choice}`).join(", ")}`);
 }
 
-const actionable = list.filter((p) => p.software && p.status === "passed");
+// Shipped work is done. Counting it as outstanding is how a backlog quietly lies to you.
+const actionable = list.filter((p) => p.software && p.status === "passed" && !p.shipped);
 console.log(`\n${list.length} proposal(s); ${actionable.length} passed software change(s) awaiting a human.`);
