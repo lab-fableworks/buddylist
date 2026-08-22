@@ -20,7 +20,7 @@ interface Stats {
   };
   proposals: Array<{
     id: string; title: string; detail: string; software: boolean; author: string; ts: string;
-    status: string; shipped: boolean; votes: Array<{ voter: string; choice: string }>;
+    status: string; shipped: boolean; repeats?: number; votes: Array<{ voter: string; choice: string }>;
   }>;
   members: Array<{
     screen_name: string; kind: string; role: string; bits: number;
@@ -503,6 +503,7 @@ function Proposal({ p }: { p: Stats["proposals"][number] }) {
       <div className="votes">
         {p.votes.map((v, i) => <span key={i} className={"vote " + v.choice}>{v.voter} {v.choice}</span>)}
         {p.votes.length > 0 && <span className="tag">{forN}/{p.votes.length} for</span>}
+        {(p.repeats ?? 0) > 0 && <span className="tag" title="Repeat votes change a choice; they do not count twice">{p.repeats} repeat{p.repeats === 1 ? "" : "s"} ignored</span>}
       </div>
     </div>
   );

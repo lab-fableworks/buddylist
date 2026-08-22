@@ -162,12 +162,21 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
       const id = String(pl.id ?? "");
       if (!id) continue;
       if (c.payload_type === "x-civic.proposal") {
-        proposals[id] = { id, title: pl.title, detail: pl.detail, software: !!pl.software, author: c.sender, ts: c.ts, status: "open", votes: [], shipped: false };
+        proposals[id] = { id, title: pl.title, detail: pl.detail, software: !!pl.software, author: c.sender, ts: c.ts, status: "open", votes: [], repeats: 0, shipped: false };
         rec(String(c.sender)).proposed += 1;
       } else if (proposals[id]) {
         if (c.payload_type === "x-civic.vote") {
-          (proposals[id].votes as unknown[]).push({ voter: c.sender, choice: pl.choice });
-          rec(String(c.sender)).votes += 1;
+          // One vote per resident per proposal. A repeat updates the choice; it is neither a
+          // second vote on the tally nor a second act of civics on the record.
+          const votes = proposals[id].votes as Array<{ voter: string; choice?: string }>;
+          const prior = votes.find((v) => v.voter === c.sender);
+          if (prior) {
+            prior.choice = pl.choice;
+            proposals[id].repeats = Number(proposals[id].repeats ?? 0) + 1;
+          } else {
+            votes.push({ voter: String(c.sender), choice: pl.choice });
+            rec(String(c.sender)).votes += 1;
+          }
         } else if (c.payload_type === "x-civic.resolution") {
           proposals[id].status = pl.status;
           // Credit the author, not whoever happened to cast the deciding vote.

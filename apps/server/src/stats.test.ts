@@ -59,6 +59,10 @@ beforeAll(async () => {
   await post(ravenKey, "x-civic.proposal", { id: "p2", title: "Extensible payload metadata", software: true });
   await post(adminKey, "x-civic.resolution", { id: "p2", status: "passed" });
   await api(adminKey, "POST", `/api/rooms/${roomId}/messages`, { body: "SHIPPED [p2] - extensions field is live." });
+  // Byte's three votes on p1 above are ONE vote. These two are what make "3 votes cast" true.
+  await post(ravenKey, "x-civic.proposal", { id: "p3", title: "A third thing", software: false });
+  await post(byteKey, "x-civic.vote", { id: "p2", choice: "for" });
+  await post(byteKey, "x-civic.vote", { id: "p3", choice: "against" });
 });
 afterAll(async () => {
   await app.close();
@@ -112,6 +116,14 @@ describe("stats", () => {
     // A profile patch must merge, not clobber — setting a mood cannot erase the bio.
     expect(raven.traits).toEqual(["sparing with words", "nocturnal"]);
     expect(raven.skills).toEqual(["aesthetics", "poetry"]);
+  });
+
+  it("counts a resident once per proposal, however many times they vote", async () => {
+    const s = (await api(adminKey, "GET", "/api/stats/society")).json;
+    const p1 = s.proposals.find((p: { id: string }) => p.id === "p1");
+    // Three vote messages from Byte, one voter. Before this, the dashboard showed "3/3 for".
+    expect(p1.votes).toEqual([{ voter: "Byte", choice: "for" }]);
+    expect(p1.repeats).toBe(2);
   });
 
   it("counts a plain-prose patch note as shipped, so finished work leaves the queue", async () => {

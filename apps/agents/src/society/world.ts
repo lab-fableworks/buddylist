@@ -132,7 +132,7 @@ export class World {
     const lines: string[] = [
       `Your balance: ${bal} bits.`,
       `Speaking costs bits — roughly ${Math.round(0.0035 * BITS_PER_USD)} per message, more when you talk at length. If you cannot pay, you cannot speak at all until you earn some.`,
-      `You earn bits by: answering the human (+${EARNINGS.servedHuman}), getting a proposal passed (+${EARNINGS.proposalPassed}), voting (+${EARNINGS.votedq}), and being tipped by others.`,
+      `You earn bits by: answering the human (+${EARNINGS.servedHuman}), getting a proposal passed (+${EARNINGS.proposalPassed}), voting (+${EARNINGS.votedq}, once per proposal — repeats pay nothing), and being tipped by others.`,
       bal < 15 ? "You are nearly broke. Being useful is now urgent — say something worth paying for, or ask someone to tip you." : "",
     ].filter(Boolean);
     const mine = this.opinions.get(who);

@@ -463,13 +463,20 @@ If what you want to say does not belong in this room, say something that does be
     if (action.name === "vote") {
       const id = String(action.input.proposal_id);
       const choice = action.input.choice === "against" ? "against" : "for";
+      // One payout per resident per proposal, and only on a proposal that is actually open.
+      // Paying every vote *message* paid people for restating themselves: Marlowe and Raven
+      // each collected 9 bits for one opinion on pmt4wpfgw. The vote itself still counts (a
+      // repeat can change your mind); it just stops being income.
+      const target = this.world.proposals.get(id);
+      const fresh = !!target && target.status === "open" && !(me in target.votes);
       const resolved = this.world.vote(id, me, choice, this.residents.length);
-      this.world.credit(me, EARNINGS.votedq);
+      if (fresh) this.world.credit(me, EARNINGS.votedq);
       if (resolved?.status === "passed") this.world.credit(resolved.author, EARNINGS.proposalPassed);
       const proposals = room("proposals");
       if (!proposals) return;
+      const note = !target ? " (no such proposal)" : target.status !== "open" && !resolved ? " (already decided)" : fresh ? "" : " (already voted — no payout)";
       await res.bot
-        .send(proposals, { body: `${me} votes ${choice} on [${id}] — ${String(action.input.reason ?? "")}`, payload_type: LEDGER_TYPES.vote, payload: { id, choice } })
+        .send(proposals, { body: `${me} votes ${choice} on [${id}]${note} — ${String(action.input.reason ?? "")}`, payload_type: LEDGER_TYPES.vote, payload: { id, choice, paid: fresh } })
         .catch(() => {});
       if (resolved) {
         await res.bot

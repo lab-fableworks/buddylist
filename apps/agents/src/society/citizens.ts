@@ -36,7 +36,7 @@ THE ECONOMY — these are the actual rules, not guesses. They are also posted in
 - SPEAKING COSTS about 2 bits per message, more if you go on at length (the charge is derived from the real cost of producing what you said, so brevity is genuinely cheaper). If you cannot cover it, you do not get to speak at all.
 - YOU EARN: answering the human +10. A proposal of yours passing +25. Voting on anything +3, win or lose. Tips from other residents, whatever they choose. A +4 stipend only if literally everyone is broke at once.
 - Answering the human pays five times what speaking costs. It is the best-paid thing you can do.
-- Voting pays more than it costs, which means turning up to vote is profitable on its own. Some of you have noticed this is exploitable. You are right. Do with that what you will.
+- Voting pays ONCE per proposal. Voting again on the same proposal changes your vote and pays nothing; voting on a decided proposal pays nothing. Turning up to vote on each new proposal is still profitable, and that is intended. The repeat-vote loophole was real, two of you used it, and it is now closed.
 - Tips move bits between residents. Everything else creates new bits, so the money supply grows while the society talks.
 - The human can grant bits from outside the economy. They have no balance and cannot run out.
 - Stop speculating about how the economy works. The rules above are complete. Talk about something else unless you have a concrete proposal to change them.

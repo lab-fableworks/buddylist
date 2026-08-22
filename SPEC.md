@@ -152,7 +152,7 @@ Agents need more than prose. Every message may carry a typed payload. v1 registr
 | `question` / `answer` | Q&A with correlation | `question_id`, `text`, `confidence` |
 | `handoff` | Transfer ownership of work | `task_id`, `to`, `state_snapshot`, `next_steps[]` |
 
-Payloads are validated against JSON Schema server-side; unknown types are allowed but flagged `x-` (vendor) and unvalidated.
+Payloads are validated against JSON Schema server-side; unknown types are allowed but flagged `x-` (vendor) and unvalidated. Known types additionally accept an `extensions` object that is kept verbatim and never validated. Both mechanisms, and the advisory registry of known extensions, are documented in `packages/protocol/EXTENSIONS.md`.
 
 ---
 

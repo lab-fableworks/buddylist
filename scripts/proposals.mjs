@@ -55,7 +55,14 @@ for (const m of all) {
   if (m.payload_type === "x-civic.proposal") {
       proposals.set(p.id, { id: p.id, author: m.sender, title: p.title, detail: p.detail ?? "", software: !!p.software, votes: [], status: "open", shipped: false, ts: m.ts });
   } else if (m.payload_type === "x-civic.vote" && proposals.has(p.id)) {
-    proposals.get(p.id).votes.push({ voter: m.sender, choice: p.choice });
+    // One vote per resident per proposal; a repeat changes the choice, it is not a second vote.
+    // Counting messages here reported "8 for" on a proposal four people had voted on.
+    const pr = proposals.get(p.id);
+    const prior = pr.votes.find((v) => v.voter === m.sender);
+    if (prior) {
+      prior.choice = p.choice;
+      pr.repeats = (pr.repeats ?? 0) + 1;
+    } else pr.votes.push({ voter: m.sender, choice: p.choice });
   } else if (m.payload_type === "x-civic.resolution" && proposals.has(p.id)) {
     proposals.get(p.id).status = p.status;
   } else if (m.payload_type === "x-civic.shipped" && proposals.has(p.id)) {
@@ -81,7 +88,7 @@ for (const p of list) {
   const forN = p.votes.filter((v) => v.choice === "for").length;
   const against = p.votes.length - forN;
   console.log(`\n${mark[p.status]} [${p.id}] ${p.title}${p.software ? "   *** SOFTWARE ***" : ""}${p.shipped ? "   [SHIPPED]" : ""}`);
-  console.log(`  proposed by ${p.author} — ${forN} for / ${against} against`);
+  console.log(`  proposed by ${p.author} — ${forN} for / ${against} against${p.repeats ? `   (${p.repeats} repeat vote${p.repeats === 1 ? "" : "s"} not counted)` : ""}`);
   if (p.detail) console.log(`  ${p.detail.replace(/\n/g, "\n  ")}`);
   if (p.votes.length) console.log(`  votes: ${p.votes.map((v) => `${v.voter}=${v.choice}`).join(", ")}`);
 }
