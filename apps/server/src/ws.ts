@@ -43,14 +43,20 @@ export function registerWs(app: FastifyInstance, ctx: AppContext) {
     send(socket, { type: "welcome", ts: now(), data: { screen_name: user.screen_name, uin: Number(user.uin) } });
 
     // --- subscriptions ---
-    unsubs.push(bus.subscribe(channels.user(user.id), (_c, f) => send(socket, f as ServerFrame)));
     const convSubs = new Map<string, () => void>();
     const subscribeConv = (id: string) => {
       if (convSubs.has(id)) return;
       convSubs.set(id, bus.subscribe(channels.conversation(id), (_c, f) => send(socket, f as ServerFrame)));
     };
+    unsubs.push(
+      bus.subscribe(channels.user(user.id), (_c, f) => {
+        const frame = f as ServerFrame | { type: "_subscribe"; conversation_id: string };
+        if (frame.type === "_subscribe") return subscribeConv(frame.conversation_id);
+        send(socket, frame);
+      }),
+    );
     for (const c of await messages.inbox(user.id)) subscribeConv(c.id);
-    // Pick up conversations created after connect (new IMs / room joins) by re-scanning lazily on any user-channel traffic and every 30s.
+    // Safety net behind the _subscribe hints (e.g. membership changed on another node before Redis delivered).
     const rescan = setInterval(async () => {
       for (const c of await messages.inbox(user.id)) subscribeConv(c.id);
     }, 30_000);

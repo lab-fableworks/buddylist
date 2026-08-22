@@ -32,7 +32,7 @@ export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string;
   const db = await openDb({ databaseUrl: opts.databaseUrl, pgliteDir: opts.pgliteDir });
   const bus = opts.redisUrl ? await redisBus(opts.redisUrl) : memoryBus();
   const users = usersService(db, bus);
-  const projects = projectsService(db);
+  const projects = projectsService(db, bus);
   const messages = messagesService(db, bus, users, projects);
   const limiter = rateLimiter(db, config.rateLimit);
   const ctx: AppContext = { db, bus, users, projects, messages, limiter };

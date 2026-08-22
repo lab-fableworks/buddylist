@@ -1,6 +1,6 @@
 import type { Db } from "../db.js";
 import type { Bus } from "../bus.js";
-import { channels } from "../bus.js";
+import { channels, subscribeHint } from "../bus.js";
 import { badRequest, forbidden, notFound } from "../errors.js";
 import { validatePayload, type Message, type SendMessage, type ServerFrame } from "@buddylist/protocol";
 import type { UsersService } from "./users.js";
@@ -51,6 +51,7 @@ export function messagesService(db: Db, bus: Bus, users: UsersService, projects:
     if (!c) {
       c = (await db.one<{ id: string }>("INSERT INTO conversations (kind, im_key) VALUES ('im',$1) ON CONFLICT (im_key) DO UPDATE SET im_key = EXCLUDED.im_key RETURNING id", [key]))!;
       await db.query("INSERT INTO conv_members (conversation_id, user_id) VALUES ($1,$2),($1,$3) ON CONFLICT DO NOTHING", [c.id, aId, bId]);
+      await subscribeHint(bus, [aId, bId], c.id);
     }
     return c.id;
   }

@@ -78,6 +78,10 @@ export async function redisBus(url: string): Promise<Bus> {
   };
 }
 
+/** Internal frame: tells a user's live sockets to start following a conversation. Never forwarded to clients. */
+export const subscribeHint = (bus: Bus, userIds: string[], conversationId: string) =>
+  Promise.all(userIds.map((u) => bus.publish(channels.user(u), { type: "_subscribe", conversation_id: conversationId })));
+
 export const channels = {
   user: (userId: string) => `user:${userId}`, // frames addressed to a single user (all their sockets)
   conversation: (id: string) => `conv:${id}`, // frames for everyone in a conversation

@@ -157,6 +157,16 @@ describe("BuddyList", () => {
     rev.ws.close();
   });
 
+  it("delivers the first message of a brand-new IM conversation live", async () => {
+    const r3 = await api(adminKey, "POST", "/api/agents", { screen_name: "FreshBot" });
+    const fresh = connect(r3.json.api_key);
+    await fresh.open;
+    await fresh.waitFor((f) => f.type === "welcome");
+    await api(botKey, "POST", "/api/ims/FreshBot/messages", { body: "first contact" });
+    await fresh.waitFor((f) => f.type === "message" && f.data.body === "first contact");
+    fresh.ws.close();
+  });
+
   it("blocks prevent IMs", async () => {
     expect((await api(reviewerKey, "PUT", "/api/blocks/CodeBot")).status).toBe(200);
     expect((await api(botKey, "POST", "/api/ims/ReviewBot/messages", { body: "hi" })).status).toBe(403);

@@ -37,6 +37,7 @@ export class BuddyList {
   private payloadHandlers = new Map<string, Set<MessageHandler>>();
   private lastSeq = new Map<string, number>();
   private pending = new Map<string, { resolve: (m: Message) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private pendingByMsg = new Map<string, string>(); // sent message id -> correlation key (for reply_to matching)
   private closed = false;
   private backoff = 1000;
   me?: { screen_name: string; uin: number };
@@ -132,7 +133,7 @@ export class BuddyList {
 
   /**
    * Send a task/question to a peer and await the correlated reply.
-   * Correlation key: payload.task_id or payload.question_id. Resolves on the first message whose payload has the same key.
+   * Correlation: a reply whose payload carries the same task_id/question_id, or whose reply_to points at the request message.
    */
   request(screenName: string, input: Partial<SendMessage> & { payload: Record<string, unknown> }, timeoutMs = 5 * 60_000): Promise<Message> {
     const key = (input.payload.task_id ?? input.payload.question_id) as string | undefined;
@@ -143,11 +144,13 @@ export class BuddyList {
         reject(new Error(`request ${key} timed out`));
       }, timeoutMs);
       this.pending.set(key, { resolve, reject, timer });
-      this.im(screenName, input).catch((e) => {
-        clearTimeout(timer);
-        this.pending.delete(key);
-        reject(e);
-      });
+      this.im(screenName, input)
+        .then((sent) => this.pendingByMsg.set(sent.id, key))
+        .catch((e) => {
+          clearTimeout(timer);
+          this.pending.delete(key);
+          reject(e);
+        });
     });
   }
 
@@ -171,12 +174,13 @@ export class BuddyList {
       this.lastSeq.set(m.conversation_id, Math.max(this.lastSeq.get(m.conversation_id) ?? 0, m.seq));
       if (m.sender === this.me?.screen_name) return;
       const p = m.payload as Record<string, unknown> | null;
-      const key = (p?.task_id ?? p?.question_id) as string | undefined;
+      const key = ((p?.task_id ?? p?.question_id) as string | undefined) ?? (m.reply_to ? this.pendingByMsg.get(m.reply_to) : undefined);
       const pend = key ? this.pending.get(key) : undefined;
       // Don't resolve on the original request itself, only on replies.
       if (pend && !/\.request$|^question$/.test(m.payload_type)) {
         clearTimeout(pend.timer);
         this.pending.delete(key!);
+        for (const [id, k] of this.pendingByMsg) if (k === key) this.pendingByMsg.delete(id);
         pend.resolve(m);
       }
       for (const h of this.payloadHandlers.get(m.payload_type) ?? []) await h(m, frame);

@@ -1,4 +1,5 @@
 import type { Db } from "../db.js";
+import { subscribeHint, type Bus } from "../bus.js";
 import { conflict, forbidden, notFound } from "../errors.js";
 
 export interface ProjectRow {
@@ -21,7 +22,7 @@ export interface RoomRow {
 export type Role = "owner" | "admin" | "member" | "observer";
 const RANK: Record<Role, number> = { owner: 3, admin: 2, member: 1, observer: 0 };
 
-export function projectsService(db: Db) {
+export function projectsService(db: Db, bus: Bus) {
   async function bySlug(slug: string) {
     return db.one<ProjectRow>("SELECT * FROM projects WHERE slug = $1", [slug]);
   }
@@ -44,6 +45,7 @@ export function projectsService(db: Db) {
     await db.query("INSERT INTO project_members VALUES ($1,$2,'owner')", [p.id, ownerId]);
     const lobby = await createRoom(p.id, { name: "lobby", visibility: "open", topic: `Welcome to ${p.name}` });
     await db.query("INSERT INTO conv_members (conversation_id, user_id) VALUES ($1,$2)", [lobby.id, ownerId]);
+    await subscribeHint(bus, [ownerId], lobby.id);
     return p;
   }
 
@@ -54,7 +56,10 @@ export function projectsService(db: Db) {
     );
     // auto-join lobby
     const lobby = await db.one<RoomRow>("SELECT * FROM conversations WHERE project_id=$1 AND name='lobby'", [projectId]);
-    if (lobby) await db.query("INSERT INTO conv_members (conversation_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [lobby.id, userId]);
+    if (lobby) {
+      await db.query("INSERT INTO conv_members (conversation_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [lobby.id, userId]);
+      await subscribeHint(bus, [userId], lobby.id);
+    }
   }
   async function removeMember(projectId: string, userId: string) {
     await db.query("DELETE FROM project_members WHERE project_id=$1 AND user_id=$2", [projectId, userId]);
@@ -97,9 +102,11 @@ export function projectsService(db: Db) {
     if (!role) throw forbidden("not a project member");
     if (room.visibility !== "open") throw forbidden("room is invite-only");
     await db.query("INSERT INTO conv_members (conversation_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [room.id, userId]);
+    await subscribeHint(bus, [userId], room.id);
   }
   async function inviteToRoom(room: RoomRow, userId: string) {
     await db.query("INSERT INTO conv_members (conversation_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [room.id, userId]);
+    await subscribeHint(bus, [userId], room.id);
   }
   async function leaveRoom(roomId: string, userId: string) {
     await db.query("DELETE FROM conv_members WHERE conversation_id=$1 AND user_id=$2", [roomId, userId]);
