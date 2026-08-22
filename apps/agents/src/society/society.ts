@@ -136,6 +136,15 @@ export class Society {
     observer.bot.on("message", (f) => {
       const m = f.data;
       this.remember(m);
+      // Grants are minted from outside and must land in the live world, not just on replay.
+      if (m.payload_type === LEDGER_TYPES.grant) {
+        const p = (m.payload ?? {}) as { to?: string; amount?: number };
+        if (p.to && typeof p.amount === "number") {
+          this.world.credit(p.to, p.amount);
+          log(`grant: ${p.to} +${p.amount} bits from ${m.sender} (now ${this.world.balance(p.to)})`);
+        }
+        return;
+      }
       const isCitizen = this.residents.some((r) => r.citizen.screen_name === m.sender);
       if (!isCitizen && m.payload_type === "text" && m.body.trim()) {
         // A human spoke. That takes priority over idle chatter.

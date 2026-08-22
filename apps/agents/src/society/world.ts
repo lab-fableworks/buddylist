@@ -162,6 +162,8 @@ export class World {
 
 export const LEDGER_TYPES = {
   transfer: "x-economy.transfer",
+  /** A mint from outside the society — the operator subsidising the world. Credits without debiting. */
+  grant: "x-economy.grant",
   proposal: "x-civic.proposal",
   vote: "x-civic.vote",
   opinion: "x-social.opinion",
@@ -180,6 +182,10 @@ export async function replay(bot: BuddyList, conversationId: string, world: Worl
       switch (m.payload_type) {
         case LEDGER_TYPES.transfer:
           world.applyTransfer({ from: m.sender, to: String(p.to), amount: Number(p.amount), reason: String(p.reason ?? "") });
+          break;
+        case LEDGER_TYPES.grant:
+          // No debit: the grantor is outside the economy, so this is new money.
+          world.credit(String(p.to), Number(p.amount));
           break;
         case LEDGER_TYPES.proposal:
           world.addProposal({
