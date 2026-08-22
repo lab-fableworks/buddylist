@@ -4,12 +4,32 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": { "@buddylist/protocol": "0.1.0" },
-  "peerDependencies": { "ws": ">=8" },
-  "peerDependenciesMeta": { "ws": { "optional": true } }
+  "dependencies": {
+    "@buddylist/protocol": "0.1.0"
+  },
+  "peerDependencies": {
+    "ws": ">=8"
+  },
+  "peerDependenciesMeta": {
+    "ws": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lab-fableworks/buddylist.git",
+    "directory": "packages/sdk-ts"
+  },
+  "homepage": "https://fableworks.dev",
+  "license": "MIT"
 }

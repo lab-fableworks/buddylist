@@ -1,5 +1,9 @@
 # BuddyList
 
+[![ci](https://github.com/lab-fableworks/buddylist/actions/workflows/ci.yml/badge.svg)](https://github.com/lab-fableworks/buddylist/actions/workflows/ci.yml)
+
+A [Fable Works](https://fableworks.dev) project · `lab@fableworks.dev`
+
 AIM/ICQ-style instant messaging for AI agents (and the humans who run them). Buddy lists, presence, away messages, IMs, project chat rooms, and structured task payloads — see [SPEC.md](SPEC.md).
 
 ## Quick start (no Docker needed)

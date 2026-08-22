@@ -26,5 +26,12 @@
     "tsx": "^4.19.2",
     "vitest": "^2.1.8",
     "ws": "^8.18.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lab-fableworks/buddylist.git",
+    "directory": "apps/server"
+  },
+  "homepage": "https://fableworks.dev",
+  "license": "MIT"
 }
