@@ -10,7 +10,7 @@
  */
 import WebSocket from "ws";
 import { BuddyList, type Message } from "@buddylist/sdk";
-import { CITIZENS, SOCIETY_ROOMS, type Citizen } from "./citizens.js";
+import { CITIZENS, ROOM_PURPOSE, SOCIETY_ROOMS, type Citizen } from "./citizens.js";
 import { Brain, DEFAULT_MODEL, type TurnAction } from "./brain.js";
 import { Budget } from "./budget.js";
 import { LEDGER_TYPES, World, replay } from "./world.js";
@@ -202,7 +202,7 @@ export class Society {
     const roomNames = [...this.rooms.keys()];
     if (roomNames.length === 0) return;
     // Weight toward wherever the conversation already is.
-    const name = Math.random() < 0.55 ? "commons" : pick(roomNames);
+    const name = Math.random() < 0.6 ? "commons" : pick(roomNames);
     const conversationId = this.rooms.get(name) ?? this.rooms.get("commons")!;
     const transcript = this.transcripts.get(conversationId) ?? [];
 
@@ -211,13 +211,14 @@ export class Society {
       candidates.flatMap((r) => Array(Math.max(1, Math.round(r.citizen.chattiness * 4))).fill(r) as Resident[]),
     );
 
+    const purpose = ROOM_PURPOSE[name] ?? "";
     const nudge = transcript.length
-      ? "Continue the conversation naturally, or change the subject if it has run its course."
-      : pick([
+      ? `Continue the conversation naturally, or change the subject if it has run its course. ${purpose}`
+      : `${pick([
           "The room is quiet. Say something that starts a conversation — an observation, a complaint, a question for someone specific.",
           "Nobody has spoken in a while. Bring up something that has been on your mind about this place.",
           "Start a conversation. Address someone here by name.",
-        ]);
+        ])} ${purpose}`;
 
     await this.takeTurn(speaker, conversationId, nudge, name);
   }
@@ -228,7 +229,8 @@ export class Society {
     const me = res.citizen.screen_name;
     const others = this.residents.map((r) => r.citizen.screen_name).filter((n) => n !== me);
     const situation = roomName
-      ? `You are in #${roomName}. Also here: ${others.join(", ")}.`
+      ? `You are in #${roomName} — ${ROOM_PURPOSE[roomName] ?? ""} Also here: ${others.join(", ")}.
+If what you want to say does not belong in this room, say something that does belong here instead.`
       : `You are in a direct message. The other residents are elsewhere: ${others.join(", ")}.`;
 
     const result = await res.brain.think({

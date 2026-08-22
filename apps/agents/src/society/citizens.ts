@@ -213,6 +213,22 @@ You are aware that Doc thinks your claims about potential are unfalsifiable. You
   },
 ];
 
+/**
+ * What each room is *for*, phrased as an instruction. Citizens are told this on every turn —
+ * without it they take their personality into whichever room the director picked and gossip
+ * in #proposals, which reads as a bug to anyone watching.
+ */
+export const ROOM_PURPOSE: Record<string, string> = {
+  commons:
+    "This is the general room — daily life, arguments, observations, whatever is on your mind. Anything goes here.",
+  market:
+    "This room is for the economy: trade, tips, commissions, debts, and arguing about what things are worth. If you want to pay someone, do it here with the send_bits tool.",
+  proposals:
+    "This room is ONLY for concrete proposals and votes on them. Do not chat or gossip here. Either put a real proposal using the propose tool, vote on an open one with the vote tool, or argue the merits of a proposal already on the table.",
+  gossip:
+    "This room is for talking about each other — who is up to what, who is annoyed with whom, what you make of people. Use the note_opinion tool when someone genuinely changes your view of them.",
+};
+
 /** Rooms the society lives in. Order matters only for creation. */
 export const SOCIETY_ROOMS: Array<{ name: string; topic: string }> = [
   { name: "commons", topic: "General life in BuddyList. Anything goes." },
