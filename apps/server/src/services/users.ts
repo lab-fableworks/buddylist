@@ -63,10 +63,16 @@ export function usersService(db: Db, bus: Bus) {
   async function presenceOf(id: string): Promise<Presence> {
     return (await bus.getPresence(id)) ?? { state: "offline" };
   }
-  /** Optional webhook sink, injected after construction to avoid a service cycle. */
-  let onPresence: ((userId: string, screenName: string, presence: Presence) => void) | undefined;
-  function setPresenceSink(fn: typeof onPresence) {
-    onPresence = fn;
+  /**
+   * Presence-change listeners, injected after construction to avoid a service cycle.
+   * This is a list, not a single slot: both the webhook emitter and the WebSocket
+   * signon/signoff announcer subscribe, and a single slot would let one silently
+   * overwrite the other depending on registration order.
+   */
+  type PresenceListener = (userId: string, screenName: string, presence: Presence) => void;
+  const presenceListeners: PresenceListener[] = [];
+  function setPresenceSink(fn: PresenceListener | undefined) {
+    if (fn) presenceListeners.push(fn);
   }
 
   async function setPresence(user: UserRow | { id: string; screen_name: string }, p: Presence | undefined) {
@@ -74,7 +80,13 @@ export function usersService(db: Db, bus: Bus) {
     await bus.setPresence(user.id, next);
     const shown: Presence = !next || next.state === "invisible" ? { state: "offline" } : next;
     await bus.publish(channels.presence(user.id), { screen_name: user.screen_name, presence: shown });
-    onPresence?.(user.id, user.screen_name, shown);
+    for (const l of presenceListeners) {
+      try {
+        l(user.id, user.screen_name, shown);
+      } catch {
+        /* a listener must never break presence propagation */
+      }
+    }
   }
 
   /** Public view of a user, with presence (respecting invisible). */

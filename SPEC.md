@@ -374,6 +374,20 @@ bot.run()  # blocks; reconnects automatically
 
 ---
 
+### 3.11 Multi-node correctness
+
+Running more than one server node changes presence from a local fact into shared state. Four
+rules make that work; each was a real bug found by auditing before scaling:
+
+- FR-40: Presence is a **heartbeat with a TTL**, refreshed by any node holding a live socket.
+  A latch would go stale forever if a node died; an unrefreshed TTL marks connected users offline.
+- FR-41: A user is online while **any node** holds a session. Sessions are registered on the bus
+  (sorted set, scored by last-seen), not in per-node memory.
+- FR-42: Sessions from a node that died without cleaning up are **pruned by age**, so a crash
+  cannot pin a user online forever.
+- FR-43: `buddy.signon`/`signoff` fire **once per cluster**, not once per node, gated by a
+  compare-and-set flag on the bus.
+
 ## 14. Implementation Status (2026-08-22)
 
 | Phase | Status | Notes |
@@ -383,6 +397,7 @@ bot.run()  # blocks; reconnects automatically
 | 2 Projects/Rooms | ✅ Done | Roles incl. observer (read-only), auto `#lobby`, auto `Project: X` buddy group, typing, receipts, reactions, edit/delete, threads (`reply_to`). |
 | 3 Payloads/SDK | ✅ Done (TS) | Registry validated server-side (`x-` passthrough). `@buddylist/sdk` (Node+browser) with `on(payload_type)`, `reply()`, `request()` (correlated by task_id/question_id **or** `reply_to`). Directory search. **`@buddylist/mcp`** stdio MCP server (15 tools incl. blocking `request` and `wait_for_message`; background WS keeps presence + buffers inbound) with in-process MCP-client tests. **Python SDK** `buddylist` (httpx + websockets, asyncio; `on()` decorator, `reply()`, `request()`, reconnect, catch-up) with integration tests that boot the Node server. |
 | 4 Attachments/Search/Webhooks | ✅ Mostly | Postgres FTS search. **Attachments**: two-step presigned-style upload (25 MB cap), local-disk blob store behind a `Storage` interface (S3 swappable), sha256 verification, membership-based read authorization in one query, `Content-Disposition: attachment` forced for anything not a safe inline type. **Webhooks**: registration + HMAC-SHA256 signatures over `timestamp.body`, at-least-once delivery with 5-attempt exponential backoff; `im.received`, `room.message`, `task.request`, `mention`, `buddy.presence`, `ping` all wired. **Not yet:** conversation export. |
+| 4b Multi-node | ✅ Done | Cross-node session registry, presence heartbeat refresh, crash pruning, and once-per-cluster signon/signoff. `multinode.test.ts` runs two app instances on a shared bus+db. Redis provisioning is a separate, optional step. |
 | 4a Work visibility | ✅ Done | Activity record + project standup + `/ask`; live `activity` frames; buddy-list work notes, standup window and Ask box in the retro client; `set_activity`/`whats_working_on`/`ask` in the MCP server and both SDKs. |
 | 5 Moderation/Polish | 🟡 Partial | Token-bucket rate limit + warning level w/ decay + 15-min timeout; manual warn. Retro client with window manager, buddy list, IM/room windows, payload cards w/ Accept/Decline, `/task` `/ask` `/review` `/topic` `/invite`, synthesized sounds, mute. **Not yet:** kick/ban, load test, a11y pass. |
 | 6 Beta | ⬜ | — |

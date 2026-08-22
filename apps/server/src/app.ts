@@ -37,9 +37,22 @@ export interface AppContext {
   activity: ActivityService;
 }
 
-export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string; redisUrl?: string; storageDir?: string; webDir?: string; logger?: boolean } = {}) {
-  const db = await openDb({ databaseUrl: opts.databaseUrl, pgliteDir: opts.pgliteDir });
-  const bus = opts.redisUrl ? await redisBus(opts.redisUrl) : memoryBus();
+export async function buildApp(
+  opts: {
+    databaseUrl?: string;
+    pgliteDir?: string;
+    redisUrl?: string;
+    storageDir?: string;
+    webDir?: string;
+    logger?: boolean;
+    /** Injected db/bus let tests run two app instances as if they were two nodes. */
+    db?: Db;
+    bus?: Bus;
+  } = {},
+) {
+  const db = opts.db ?? (await openDb({ databaseUrl: opts.databaseUrl, pgliteDir: opts.pgliteDir }));
+  const bus = opts.bus ?? (opts.redisUrl ? await redisBus(opts.redisUrl) : memoryBus());
+  const ownsResources = !opts.db && !opts.bus;
   const users = usersService(db, bus);
   const projects = projectsService(db, bus);
   const limiter = rateLimiter(db, config.rateLimit);
@@ -95,8 +108,11 @@ export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string;
 
   app.addHook("onClose", async () => {
     webhooks.stop();
-    await bus.close();
-    await db.close();
+    // Injected db/bus belong to the caller (a multi-node test); don't tear down shared state.
+    if (ownsResources) {
+      await bus.close();
+      await db.close();
+    }
   });
 
   return { app, ctx };

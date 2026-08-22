@@ -3,7 +3,8 @@ import type { WebSocket } from "ws";
 import { ClientFrame, type ServerFrame } from "@buddylist/protocol";
 import type { AppContext } from "./app.js";
 import { authenticate, bearer } from "./auth.js";
-import { channels } from "./bus.js";
+import { channels, PRESENCE_TTL_MS } from "./bus.js";
+import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
 
 /**
@@ -34,11 +35,15 @@ export function registerWs(app: FastifyInstance, ctx: AppContext) {
     let idle = false;
 
     // --- register session & presence ---
+    // Session ids are tracked on the bus, not just locally, so a second node holding the
+    // same user keeps them online when this node's socket closes.
+    const sessionId = randomUUID();
     const mine = sessions.get(user.id) ?? new Set();
-    const firstSocket = mine.size === 0;
     mine.add(socket);
     sessions.set(user.id, mine);
-    if (firstSocket || (await users.presenceOf(user.id)).state === "offline") await users.setPresence(user, { state: "online" });
+    const sessionCount = await bus.addSession(user.id, sessionId);
+    if (sessionCount === 1 || (await users.presenceOf(user.id)).state === "offline") await users.setPresence(user, { state: "online" });
+    await announceVisibility(user, await users.presenceOf(user.id));
 
     send(socket, { type: "welcome", ts: now(), data: { screen_name: user.screen_name, uin: Number(user.uin) } });
 
@@ -121,6 +126,9 @@ export function registerWs(app: FastifyInstance, ctx: AppContext) {
 
     // --- liveness ---
     const liveness = setInterval(async () => {
+      // Refresh first: presence carries a TTL, so a long-lived quiet socket would otherwise
+      // let the key expire and the user would appear offline while still connected.
+      await bus.touchSession(user.id, sessionId).catch(() => {});
       const silent = Date.now() - lastHeartbeat;
       if (silent > config.socketTimeoutMs * 3) return socket.terminate();
       if (!idle && silent > config.heartbeatIdleMs) {
@@ -128,7 +136,7 @@ export function registerWs(app: FastifyInstance, ctx: AppContext) {
         const p = await users.presenceOf(user.id);
         if (p.state === "online") await users.setPresence(user, { state: "idle" });
       }
-    }, 15_000);
+    }, Math.min(15_000, PRESENCE_TTL_MS / 4));
 
     socket.on("close", async () => {
       clearInterval(liveness);
@@ -138,27 +146,34 @@ export function registerWs(app: FastifyInstance, ctx: AppContext) {
       convSubs.forEach((u) => u());
       presenceSubs.forEach((u) => u());
       mine.delete(socket);
-      if (mine.size === 0) {
-        sessions.delete(user.id);
+      if (mine.size === 0) sessions.delete(user.id);
+      const remaining = await bus.removeSession(user.id, sessionId).catch(() => 0);
+      if (remaining === 0) {
+        // Nobody, on any node, still holds this user.
         await users.setPresence(user, undefined).catch(() => {}); // server may be shutting down
         await ctx.activity.clear(user.id, user.screen_name).catch(() => {});
       }
+      await announceVisibility(user, await users.presenceOf(user.id).catch(() => ({ state: "offline" as const }))).catch(() => {});
     });
   });
 
-  // buddy.signon / signoff derived from presence transitions for watchers
-  // (clients can also derive this from presence frames; kept for the door sounds)
-  const lastState = new Map<string, string>();
-  bus.subscribe("presence-any", () => {});
-  const origSet = users.setPresence;
-  users.setPresence = async (u, p) => {
-    await origSet(u, p);
-    const prev = lastState.get(u.id) ?? "offline";
-    const next = !p || p.state === "invisible" ? "offline" : p.state;
-    lastState.set(u.id, next);
-    if ((prev === "offline") !== (next === "offline")) {
-      const frame: ServerFrame = { type: next === "offline" ? "buddy.signoff" : "buddy.signon", ts: now(), data: { screen_name: u.screen_name } };
-      for (const w of await users.watchersOf(u.id)) await bus.publish(channels.user(w), frame);
-    }
-  };
+  /**
+   * Emit buddy.signon / buddy.signoff to watchers when a user's *visibility* flips.
+   *
+   * The flag lives on the bus rather than in a per-node Map so that exactly one node emits
+   * the transition — otherwise every node in the cluster would fire its own copy and clients
+   * would hear the door sound once per machine.
+   */
+  async function announceVisibility(u: { id: string; screen_name: string }, presence: { state: string }) {
+    const visible = presence.state !== "offline" && presence.state !== "invisible";
+    if (!(await bus.setIfChanged(`vis:${u.id}`, visible ? "1" : "0"))) return;
+    const frame: ServerFrame = { type: visible ? "buddy.signon" : "buddy.signoff", ts: now(), data: { screen_name: u.screen_name } };
+    for (const w of await users.watchersOf(u.id)) await bus.publish(channels.user(w), frame);
+  }
+
+  // A presence change that isn't a connect/disconnect (going invisible, coming back) also
+  // flips visibility, so route those through the same deduplicated announcement.
+  users.setPresenceSink((userId, screenName, presence) => {
+    void announceVisibility({ id: userId, screen_name: screenName }, presence).catch(() => {});
+  });
 }
