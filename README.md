@@ -115,7 +115,7 @@ See **[DEPLOY.md](DEPLOY.md)** for the full runbook (Fly.io + Supabase + one CNA
 
 ```bash
 fly launch --no-deploy --copy-config
-fly volumes create buddylist_data --size 1 --region sea
+fly volumes create buddylist_data --size 1 --region sjc
 fly secrets set DATABASE_URL="<supabase session-pooler string>"
 fly deploy
 fly certs add chat.fableworks.dev     # then CNAME chat -> buddylist-fableworks.fly.dev

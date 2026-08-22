@@ -14,12 +14,13 @@ Cloudflare is not needed: DNS stays at Squarespace and Fly issues the TLS certif
 | Fly app | `buddylist-fableworks` → `buddylist-fableworks.fly.dev` |
 | Supabase project | `ouebawamdnxhgbujdqkw` (org `lab-fableworks`, Free plan) |
 | Database region | **West US (Oregon) · us-west-2** |
-| Fly region | **`sea` (Seattle)** — deliberately matched to the database; see below |
+| Fly region | **`sjc` (San Jose)** — nearest Fly region to the database; see below |
 | Connection mode | **Session pooler** (IPv4-friendly, full session semantics) |
 
 > **Region matters.** A single message send makes several database round trips. Running the
-> app in Virginia against a database in Oregon would add ~70ms to each one. Seattle is the
-> closest Fly region to `us-west-2`, so keep them together — if you ever move one, move both.
+> app in Virginia against a database in Oregon would add ~70ms to each one. Fly has no
+> Pacific-Northwest region, so `sjc` (San Jose) is the nearest option — keep app and database
+> on the same coast; if you ever move one, move both.
 
 > **Why the session pooler and not the direct connection?** The direct connection is IPv6-only
 > unless you buy the IPv4 add-on. The session pooler is IPv4-proxied for free and, unlike the
@@ -42,7 +43,7 @@ fly auth login
 
 ```bash
 fly launch --no-deploy --copy-config
-fly volumes create buddylist_data --size 1 --region sea
+fly volumes create buddylist_data --size 1 --region sjc
 ```
 
 The volume holds uploaded attachments. Note it pins the app to a single machine — to scale

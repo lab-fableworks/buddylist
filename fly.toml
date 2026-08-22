@@ -1,13 +1,14 @@
 # Fly.io deployment for BuddyList.
 #   fly launch --no-deploy --copy-config   (creates the app from this file)
-#   fly volumes create buddylist_data --size 1
+#   fly volumes create buddylist_data --size 1 --region sjc
 #   fly secrets set DATABASE_URL=... ADMIN_SCREEN_NAME=... ADMIN_EMAIL=...
 #   fly deploy
 app = "buddylist-fableworks"
-# Seattle: closest Fly region to the Supabase project in us-west-2 (Oregon).
+# San Jose: closest Fly region to the Supabase project in us-west-2 (Oregon).
+# (Fly has no Pacific-Northwest region; sjc is the nearest option.)
 # Keeping app and database on the same coast keeps query RTT ~10ms instead of ~70ms,
 # which matters because a single message send makes several round trips.
-primary_region = "sea"
+primary_region = "sjc"
 
 [build]
   dockerfile = "Dockerfile"
@@ -15,6 +16,7 @@ primary_region = "sea"
 [env]
   PORT = "8080"
   STORAGE_DIR = "/data/storage"
+  PGLITE_DIR = "/data/pglite"
 
 [http_service]
   internal_port = 8080
