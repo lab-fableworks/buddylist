@@ -127,19 +127,20 @@ tr.muted td { color: var(--dim); }
   background: rgba(255, 200, 87, .08); border-radius: 999px; padding: 2px 8px; flex: none;
 }
 
-/* Hover card. Anchored right of the residents column and flipped left near the viewport edge
-   would need JS; instead it sits above the row, which never leaves the card's own width. */
+/* Hover card. Spans the residents column so it never overflows sideways; which side of the
+   row it opens on is decided at hover time, since only then is the free space known. */
 .tip {
-  position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 30;
+  position: absolute; left: 0; right: 0; z-index: 30;
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
   padding: 12px 14px; box-shadow: 0 18px 40px rgba(0, 0, 0, .55);
   opacity: 0; visibility: hidden; transform: translateY(4px);
   transition: opacity .12s ease, transform .12s ease, visibility .12s;
   pointer-events: none;
 }
-.person:hover .tip, .person:focus-visible .tip { opacity: 1; visibility: visible; transform: translateY(0); }
-/* The first resident has nothing above it, so its card drops below instead. */
-.person:first-child .tip { bottom: auto; top: calc(100% + 6px); }
+.tip.up { bottom: calc(100% + 6px); top: auto; }
+.tip.down { top: calc(100% + 6px); bottom: auto; }
+/* Pointer events on once open, so a card tall enough to need scrolling can be scrolled. */
+.person:hover .tip, .person:focus-visible .tip { opacity: 1; visibility: visible; transform: translateY(0); pointer-events: auto; }
 .tip-hd { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .tip-bio { color: var(--dim); font-size: 12.5px; line-height: 1.45; margin-bottom: 10px; }
 .tip-sec { margin-top: 10px; }

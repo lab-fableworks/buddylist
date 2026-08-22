@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /** Shape returned by GET /api/stats/:slug. */
 interface Stats {
@@ -266,8 +266,31 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
 function Person({ m }: { m: Stats["members"][number] }) {
   const moodAge = m.mood ? (Date.now() - Date.parse(m.mood.at)) / 3600_000 : 0;
   const stale = moodAge > 6;
+  const row = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<"up" | "down">("up");
+  const [cap, setCap] = useState<number>();
+
+  /**
+   * Open on whichever side has more room. A fixed direction clips the tallest cards — and
+   * the tallest card belongs to the busiest resident, who is exactly the one worth reading.
+   */
+  const position = () => {
+    const r = row.current?.getBoundingClientRect();
+    const tip = row.current?.querySelector(".tip")?.getBoundingClientRect();
+    if (!r || !tip) return;
+    const gap = 14;
+    const above = r.top - gap;
+    const below = window.innerHeight - r.bottom - gap;
+    const up = tip.height <= above || above >= below;
+    setPlace(up ? "up" : "down");
+    // Only constrain when it genuinely does not fit; a max-height on a card that fits would
+    // add a scrollbar to nothing.
+    const room = up ? above : below;
+    setCap(tip.height > room ? Math.max(180, room) : undefined);
+  };
+
   return (
-    <div className="person" tabIndex={0}>
+    <div className="person" tabIndex={0} ref={row} onMouseEnter={position} onFocus={position}>
       <div className="avatar" style={{ background: `hsl(${hue(m.screen_name)} 70% 62%)` }}>{m.screen_name.slice(0, 2)}</div>
       <div className="who">
         <div className="name">
@@ -278,7 +301,7 @@ function Person({ m }: { m: Stats["members"][number] }) {
       {m.mood && !stale && <span className="mood">{m.mood.word}</span>}
       <div className="bits">{m.bits > 0 ? `${m.bits}b` : ""}</div>
 
-      <div className="tip" role="tooltip">
+      <div className={"tip " + place} role="tooltip" style={cap ? { maxHeight: cap, overflowY: "auto" } : undefined}>
         <div className="tip-hd">
           <b>{m.screen_name}</b>
           <span className={"tag " + m.presence.state}>{m.presence.message ?? m.presence.state}</span>
