@@ -189,6 +189,15 @@ CREATE TABLE IF NOT EXISTS reactions (
 const MIGRATIONS = `
 ALTER TABLE users ADD COLUMN IF NOT EXISTS activity JSONB;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT false;
+-- "Needs you" dismissals. A row hides a conversation's items up to through_seq; anything
+-- said after that surfaces again, so dismissing is "handled for now", never "mute".
+CREATE TABLE IF NOT EXISTS attention_dismissals (
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  through_seq     BIGINT NOT NULL,
+  dismissed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, conversation_id)
+);
 `;
 
 export async function migrate(db: Db) {

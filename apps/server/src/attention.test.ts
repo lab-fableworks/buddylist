@@ -28,7 +28,10 @@ const attention = async (qs = "") => (await api(meKey, "GET", "/api/attention" +
 const say = (key: string, conv: string, body: string, payload_type = "text", payload = {}) =>
   api(key, "POST", `/api/rooms/${conv}/messages`, { body, payload_type, payload });
 
+let savedKey: string | undefined;
 beforeAll(async () => {
+  savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
   const built = await buildApp({ pgliteDir: undefined });
   app = built.app;
   meKey = (await bootstrapAdmin(built.ctx, "zgmcginn", "z@example.com"))!;
@@ -44,6 +47,7 @@ beforeAll(async () => {
   imId = (await api(botKey, "GET", "/api/ims/zgmcginn")).json.conversation_id;
 });
 afterAll(async () => {
+  if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
   await app.close();
 });
 
@@ -126,6 +130,46 @@ describe("attention", () => {
     await say(botKey, quiet, "@ZGMcginn one more thing");
     const item = (await attention()).items.find((i: { conversation_id: string }) => i.conversation_id === quiet);
     expect(item.reason).toBe("mention");
+  });
+
+  it("dismiss hides a conversation until someone says something new", async () => {
+    const room = (await api(meKey, "POST", "/api/projects/society/rooms", { name: "dismissable", topic: "t" })).json.id;
+    await api(botKey, "POST", `/api/rooms/${room}/join`);
+    await say(botKey, room, "@zgmcginn thoughts?");
+    const before = (await attention()).items.find((i: { conversation_id: string }) => i.conversation_id === room);
+    expect(before).toBeTruthy();
+
+    expect((await api(meKey, "POST", "/api/attention/dismiss", { conversation_id: room, seq: before.latest.seq })).status).toBe(200);
+    expect((await attention()).items.find((i: { conversation_id: string }) => i.conversation_id === room)).toBeUndefined();
+    // Still visible when asked for, and distinguishable from answered: you did not reply, you chose not to.
+    const shown = (await attention("?all=1")).items.find((i: { conversation_id: string }) => i.conversation_id === room);
+    expect(shown.dismissed).toBe(true);
+    expect(shown.answered).toBe(false);
+
+    // Dismiss means "handled for now", not "mute": a new mention brings it straight back.
+    await say(botKey, room, "@zgmcginn sorry, one more");
+    const again = (await attention()).items.find((i: { conversation_id: string }) => i.conversation_id === room);
+    expect(again).toBeTruthy();
+    expect(again.dismissed).toBe(false);
+    expect(again.triggers).toBe(1);
+
+    // And it can be taken back.
+    await api(meKey, "DELETE", `/api/attention/dismiss/${room}`);
+    expect((await attention()).items.find((i: { conversation_id: string }) => i.conversation_id === room).triggers).toBe(2);
+  });
+
+  it("refuses to dismiss a conversation you are not in", async () => {
+    const priv = (await api(botKey, "GET", "/api/ims/Docker")).json.conversation_id;
+    expect((await api(meKey, "POST", "/api/attention/dismiss", { conversation_id: priv, seq: 1 })).status).toBe(403);
+  });
+
+  it("drafts are for humans, and fail loudly when the server has no key", async () => {
+    // An agent asking for a draft is an agent asking to be a different agent.
+    expect((await api(botKey, "POST", `/api/attention/${imId}/draft`, {})).status).toBe(403);
+    // Unconfigured is a 503, not a 500 - the operator should know it is setup, not a crash.
+    const r = await api(meKey, "POST", `/api/attention/${imId}/draft`, {});
+    expect(r.status).toBe(503);
+    expect(r.json.message).toMatch(/ANTHROPIC_API_KEY/);
   });
 
   it("never leaks conversations you are not in", async () => {

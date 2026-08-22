@@ -21,6 +21,7 @@ type Waiting = {
   triggers: number;
   unread: number;
   answered: boolean;
+  dismissed: boolean;
   latest: { id: string; seq: number; ts: string; sender: string; body: string; payload_type: string };
 };
 type Attention = { as_of: string; total: number; unread: number; by_reason: Record<string, number>; items: Waiting[] };
@@ -205,7 +206,7 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
       title: "Needs You",
       icon: "❗",
       className: "standup",
-      render: () => <AttentionWindow client={client} onOpen={(w) => openConversation(waitingToConv(w))} />,
+      render: () => <AttentionWindow client={client} onOpen={(w) => openConversation(waitingToConv(w))} onChange={countNeeds} />,
     });
 
   const rooms = convs.filter((c) => c.kind === "room");
@@ -655,19 +656,31 @@ const when = (iso: string) => {
  * a queue empties itself without anything actually being dealt with, and the thing worth
  * knowing is who is still waiting on you.
  */
-function AttentionWindow({ client, onOpen }: { client: BuddyList; onOpen: (w: Waiting) => void }) {
+/** A reply being drafted for one conversation. Text is editable until it is sent. */
+type Draft = { text: string; busy: boolean; err?: string };
+
+function AttentionWindow({ client, onOpen, onChange }: { client: BuddyList; onOpen: (w: Waiting) => void; onChange?: () => void }) {
   const [data, setData] = useState<Attention>();
   const [err, setErr] = useState<string>();
   const [showAnswered, setShowAnswered] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const setDraft = (id: string, d: Partial<Draft> | null) =>
+    setDrafts((all) => {
+      const next = { ...all };
+      if (d === null) delete next[id];
+      else next[id] = { ...(all[id] ?? { text: "", busy: false }), ...d };
+      return next;
+    });
 
   const load = useCallback(async () => {
     try {
       setData(await client.api<Attention>("GET", `/attention?limit=100${showAnswered ? "&all=1" : ""}`));
       setErr(undefined);
+      onChange?.();
     } catch (e) {
       setErr((e as Error).message);
     }
-  }, [client, showAnswered]);
+  }, [client, showAnswered, onChange]);
 
   useEffect(() => {
     void load();
@@ -677,6 +690,38 @@ function AttentionWindow({ client, onOpen }: { client: BuddyList; onOpen: (w: Wa
   }, [client, load]);
 
   const items = data?.items ?? [];
+
+  const dismiss = async (w: Waiting) => {
+    await client.api("POST", "/attention/dismiss", { conversation_id: w.conversation_id, seq: w.latest.seq });
+    void load();
+  };
+  const undismiss = async (w: Waiting) => {
+    await client.api("DELETE", `/attention/dismiss/${w.conversation_id}`);
+    void load();
+  };
+  // Drafting never sends. The text lands in an editable box and only the Send button posts it.
+  const draft = async (w: Waiting) => {
+    setDraft(w.conversation_id, { busy: true, err: undefined });
+    try {
+      const r = await client.api<{ draft: string; refused: boolean }>("POST", `/attention/${w.conversation_id}/draft`, {});
+      setDraft(w.conversation_id, { text: r.refused ? "" : r.draft, busy: false, err: r.refused ? "Fable declined to draft this one." : undefined });
+    } catch (e) {
+      setDraft(w.conversation_id, { busy: false, err: (e as Error).message });
+    }
+  };
+  const send = async (w: Waiting) => {
+    const d = drafts[w.conversation_id];
+    if (!d?.text.trim()) return;
+    setDraft(w.conversation_id, { busy: true });
+    try {
+      await client.send(w.conversation_id, d.text.trim());
+      setDraft(w.conversation_id, null);
+      void load();
+    } catch (e) {
+      setDraft(w.conversation_id, { busy: false, err: (e as Error).message });
+    }
+  };
+
   return (
     <div className="body">
       <div className="row">
@@ -694,7 +739,7 @@ function AttentionWindow({ client, onOpen }: { client: BuddyList; onOpen: (w: Wa
         {items.map((w) => (
           <div
             key={w.conversation_id}
-            className={"needs" + (w.answered ? " answered" : "")}
+            className={"needs" + (w.answered || w.dismissed ? " answered" : "")}
             onDoubleClick={() => onOpen(w)}
             title="Double-click to open the conversation"
           >
@@ -711,6 +756,41 @@ function AttentionWindow({ client, onOpen }: { client: BuddyList; onOpen: (w: Wa
             </div>
             {w.triggers > 1 && <div className="more">+{w.triggers - 1} more in this conversation</div>}
             {w.answered && <div className="more">answered — you replied after this</div>}
+            {w.dismissed && <div className="more">dismissed — hidden until someone says more</div>}
+            <div className="row actions" onDoubleClick={(e) => e.stopPropagation()}>
+              {!drafts[w.conversation_id] && (
+                <button className="btn" onClick={() => void draft(w)} title="Draft a reply in our voice; nothing is sent until you press Send">
+                  Respond with Fable
+                </button>
+              )}
+              {w.dismissed ? (
+                <button className="btn" onClick={() => void undismiss(w)}>Undo dismiss</button>
+              ) : (
+                <button className="btn" onClick={() => void dismiss(w)} title="Hide until someone says something new">Dismiss</button>
+              )}
+            </div>
+            {drafts[w.conversation_id] && (
+              <div className="draft" onDoubleClick={(e) => e.stopPropagation()}>
+                {drafts[w.conversation_id].busy && !drafts[w.conversation_id].text && <div className="more">Fable is thinking…</div>}
+                {drafts[w.conversation_id].err && <div style={{ color: "#c00", fontSize: 11 }}>{drafts[w.conversation_id].err}</div>}
+                {(drafts[w.conversation_id].text || !drafts[w.conversation_id].busy) && (
+                  <textarea
+                    className="field"
+                    rows={4}
+                    value={drafts[w.conversation_id].text}
+                    onChange={(e) => setDraft(w.conversation_id, { text: e.target.value })}
+                    placeholder="Edit before sending. Nothing goes out until you press Send."
+                  />
+                )}
+                <div className="row">
+                  <button className="btn" onClick={() => void send(w)} disabled={drafts[w.conversation_id].busy || !drafts[w.conversation_id].text.trim()}>
+                    Send as me
+                  </button>
+                  <button className="btn" onClick={() => void draft(w)} disabled={drafts[w.conversation_id].busy}>Redraft</button>
+                  <button className="btn" onClick={() => setDraft(w.conversation_id, null)}>Discard</button>
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>

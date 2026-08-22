@@ -43,10 +43,11 @@ interface Attention {
   by_reason: Record<string, number>;
   items: Array<{
     conversation_id: string; kind: string; room: string | null; project: string | null; peer: string | null;
-    reason: string; triggers: number; unread: number; answered: boolean;
+    reason: string; triggers: number; unread: number; answered: boolean; dismissed: boolean;
     latest: { seq: number; ts: string; sender: string; body: string; payload_type: string };
   }>;
 }
+type Draft = { text: string; busy: boolean; err?: string };
 
 const REASON_LABEL: Record<string, string> = {
   question: "asked you",
@@ -57,8 +58,12 @@ const REASON_LABEL: Record<string, string> = {
   mention: "mentioned you",
 };
 
-const api = async <T,>(path: string, key: string): Promise<T> => {
-  const r = await fetch("/api" + path, { headers: { authorization: `Bearer ${key}` } });
+const api = async <T,>(path: string, key: string, init?: { method?: string; body?: unknown }): Promise<T> => {
+  const r = await fetch("/api" + path, {
+    method: init?.method ?? "GET",
+    headers: { authorization: `Bearer ${key}`, ...(init?.body !== undefined ? { "content-type": "application/json" } : {}) },
+    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+  });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((j as { message?: string }).message ?? `HTTP ${r.status}`);
   return j as T;
@@ -116,7 +121,15 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
   const [slug, setSlug] = useState(localStorage.getItem("bl.dash.project") ?? "society");
   const [stats, setStats] = useState<Stats>();
   const [needs, setNeeds] = useState<Attention>();
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [err, setErr] = useState<string>();
+  const setDraft = (id: string, d: Partial<Draft> | null) =>
+    setDrafts((all) => {
+      const next = { ...all };
+      if (d === null) delete next[id];
+      else next[id] = { ...(all[id] ?? { text: "", busy: false }), ...d };
+      return next;
+    });
   const [live, setLive] = useState(true);
 
   useEffect(() => {
@@ -147,6 +160,33 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
     const t = setInterval(load, 20_000);
     return () => clearInterval(t);
   }, [live, load]);
+
+  const dismiss = async (w: Attention["items"][number]) => {
+    await api("/attention/dismiss", apiKey, { method: "POST", body: { conversation_id: w.conversation_id, seq: w.latest.seq } });
+    void load();
+  };
+  // Drafting never sends; the text is editable and only "Send as me" posts it.
+  const draft = async (w: Attention["items"][number]) => {
+    setDraft(w.conversation_id, { busy: true, err: undefined });
+    try {
+      const r = await api<{ draft: string; refused: boolean }>(`/attention/${w.conversation_id}/draft`, apiKey, { method: "POST", body: {} });
+      setDraft(w.conversation_id, { text: r.refused ? "" : r.draft, busy: false, err: r.refused ? "Fable declined to draft this one." : undefined });
+    } catch (e) {
+      setDraft(w.conversation_id, { busy: false, err: (e as Error).message });
+    }
+  };
+  const send = async (w: Attention["items"][number]) => {
+    const d = drafts[w.conversation_id];
+    if (!d?.text.trim()) return;
+    setDraft(w.conversation_id, { busy: true });
+    try {
+      await api(`/rooms/${w.conversation_id}/messages`, apiKey, { method: "POST", body: { body: d.text.trim() } });
+      setDraft(w.conversation_id, null);
+      void load();
+    } catch (e) {
+      setDraft(w.conversation_id, { busy: false, err: (e as Error).message });
+    }
+  };
 
   const online = stats?.members.filter((m) => m.presence.state !== "offline").length ?? 0;
   const openProps = stats?.proposals.filter((p) => p.status === "open").length ?? 0;
@@ -196,6 +236,36 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
                     <b>{w.latest.sender}:</b> {w.latest.body.replace(/\s+/g, " ").slice(0, 160) || `(${w.latest.payload_type})`}
                   </div>
                   {w.triggers > 1 && <div className="tip-note dim">+{w.triggers - 1} more in this conversation</div>}
+                  <div className="needs-actions">
+                    {!drafts[w.conversation_id] && (
+                      <button className="btn ghost" onClick={() => void draft(w)} title="Draft a reply in our voice; nothing is sent until you press Send">
+                        Respond with Fable
+                      </button>
+                    )}
+                    <button className="btn ghost" onClick={() => void dismiss(w)} title="Hide until someone says something new">Dismiss</button>
+                  </div>
+                  {drafts[w.conversation_id] && (
+                    <div className="draft">
+                      {drafts[w.conversation_id].busy && !drafts[w.conversation_id].text && <div className="tip-note">Fable is thinking…</div>}
+                      {drafts[w.conversation_id].err && <div className="err" style={{ padding: "4px 0" }}>{drafts[w.conversation_id].err}</div>}
+                      {(drafts[w.conversation_id].text || !drafts[w.conversation_id].busy) && (
+                        <textarea
+                          className="field"
+                          rows={4}
+                          value={drafts[w.conversation_id].text}
+                          onChange={(e) => setDraft(w.conversation_id, { text: e.target.value })}
+                          placeholder="Edit before sending. Nothing goes out until you press Send."
+                        />
+                      )}
+                      <div className="needs-actions">
+                        <button className="btn" onClick={() => void send(w)} disabled={drafts[w.conversation_id].busy || !drafts[w.conversation_id].text.trim()}>
+                          Send as me
+                        </button>
+                        <button className="btn ghost" onClick={() => void draft(w)} disabled={drafts[w.conversation_id].busy}>Redraft</button>
+                        <button className="btn ghost" onClick={() => setDraft(w.conversation_id, null)}>Discard</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

@@ -220,6 +220,12 @@ dl.info dd { margin: 0; word-break: break-word; }
 /* The two that are an explicit request, rather than something you merely appear in. */
 .why.question, .why.task-request { background: #ffe9b0; border-color: #c8a23a; }
 .why.dm { background: #d8ecff; border-color: #6a9fd0; }
+.needs .actions { margin-top: 3px; gap: 4px; }
+.needs .actions .btn { font-size: 10px; padding: 0 6px; min-width: 0; }
+.needs .draft { margin-top: 4px; padding: 4px; background: #fffbe6; border: 1px solid #d8c98a; }
+.needs .draft textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; resize: vertical; }
+.needs .draft .row { margin-top: 3px; gap: 4px; }
+.needs .draft .btn { font-size: 10px; padding: 0 6px; min-width: 0; }
 .standrow { padding: 3px 2px; border-bottom: 1px dotted #bbb; display: flex; flex-direction: column; gap: 2px; }
 .standrow:last-child { border-bottom: none; }
 .standrow .btn { padding: 0 6px; font-size: 11px; }

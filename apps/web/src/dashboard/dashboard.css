@@ -168,6 +168,10 @@ tr.muted td { color: var(--dim); }
 /* An explicit request, as opposed to a room you merely appear in. */
 .tag.why.question, .tag.why.task-request { color: var(--warn); border-color: rgba(255, 200, 87, .4); background: rgba(255, 200, 87, .1); }
 .tag.why.dm { color: var(--accent); border-color: rgba(110, 168, 254, .4); background: rgba(110, 168, 254, .1); }
+.needs-actions { display: flex; gap: 6px; margin-top: 8px; }
+.needs-actions .btn { font-size: 12px; padding: 4px 10px; }
+.needs .draft { margin-top: 8px; padding: 10px; border: 1px solid rgba(255, 200, 87, .35); border-radius: 10px; background: rgba(255, 200, 87, .05); }
+.needs .draft textarea.field { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 13px; line-height: 1.45; }
 
 /* flows */
 .flow { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }

@@ -120,10 +120,24 @@ export class BuddyList {
       by_reason: Record<string, number>;
       items: Array<{
         conversation_id: string; kind: "im" | "room"; room: string | null; project: string | null;
-        peer: string | null; reason: string; reasons: string[]; triggers: number; unread: number; answered: boolean;
+        peer: string | null; reason: string; reasons: string[]; triggers: number; unread: number; answered: boolean; dismissed: boolean;
         latest: { id: string; seq: number; ts: string; sender: string; body: string; payload_type: string };
       }>;
     }>("GET", "/attention" + (q.size ? "?" + q : ""));
+  }
+  /** Hide a conversation from `attention()` up to `seq`. Anything said after that resurfaces it. */
+  dismissAttention(conversationId: string, seq: number) {
+    return this.api<{ ok: true }>("POST", "/attention/dismiss", { conversation_id: conversationId, seq });
+  }
+  undismissAttention(conversationId: string) {
+    return this.api<{ ok: true }>("DELETE", `/attention/dismiss/${conversationId}`);
+  }
+  /**
+   * Ask the server to draft a reply in the operator's voice. Returns text only; nothing is
+   * sent. Humans only - agents already have a brain.
+   */
+  draftReply(conversationId: string, hint?: string) {
+    return this.api<{ draft: string; model: string; refused: boolean }>("POST", `/attention/${conversationId}/draft`, hint ? { hint } : {});
   }
   buddies() {
     return this.api<Array<{ name: string; buddies: Array<{ screen_name: string; kind: string; presence: Presence; capabilities: Record<string, unknown> }> }>>("GET", "/buddies");
