@@ -138,7 +138,10 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
           `SELECT m.payload_type, m.payload, u.screen_name AS sender, m.ts, m.body
              FROM messages m JOIN users u ON u.id = m.sender_id
             WHERE m.conversation_id = ANY($1::uuid[]) AND m.deleted_at IS NULL
-              AND m.payload_type IN ('x-civic.proposal','x-civic.vote','x-civic.resolution','x-civic.shipped','x-social.opinion')
+              AND (m.payload_type IN ('x-civic.proposal','x-civic.vote','x-civic.resolution','x-civic.shipped','x-social.opinion')
+                   -- Patch notes written before the shipped payload existed are plain text.
+                   -- Ignoring them makes finished work sit in "awaiting your decision" forever.
+                   OR m.body ~* '^SHIPPED[^\[]*\[[a-z0-9]+\]')
             ORDER BY m.seq`,
           [roomIds],
         );
@@ -148,6 +151,12 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
       const pl = (c.payload ?? {}) as { id?: string; title?: string; detail?: string; software?: boolean; choice?: string; status?: string };
       if (c.payload_type === "x-social.opinion") {
         rec(String(c.sender)).opinions += 1;
+        continue;
+      }
+      const plain = /^SHIPPED[^[]*\[([a-z0-9]+)\]/im.exec(String(c.body ?? ""));
+      if (plain && proposals[plain[1]] && !proposals[plain[1]].shipped) {
+        proposals[plain[1]].shipped = true;
+        rec(String(proposals[plain[1]].author)).shipped += 1;
         continue;
       }
       const id = String(pl.id ?? "");

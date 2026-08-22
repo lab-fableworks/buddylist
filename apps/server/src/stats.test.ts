@@ -53,6 +53,12 @@ beforeAll(async () => {
   await post(byteKey, "x-economy.transfer", { to: "Raven", amount: 8, reason: "again" });
   await post(byteKey, "x-social.opinion", { about: "Raven", score: 3, note: "sharper than she lets on" });
   await post(byteKey, "x-social.opinion", { about: "boss", score: 1, note: "fine" });
+
+  // A second proposal whose patch note is plain prose, as the earliest ones were.
+  // Raven's again, so the author-credit assertions above keep their meaning.
+  await post(ravenKey, "x-civic.proposal", { id: "p2", title: "Extensible payload metadata", software: true });
+  await post(adminKey, "x-civic.resolution", { id: "p2", status: "passed" });
+  await api(adminKey, "POST", `/api/rooms/${roomId}/messages`, { body: "SHIPPED [p2] - extensions field is live." });
 });
 afterAll(async () => {
   await app.close();
@@ -106,6 +112,17 @@ describe("stats", () => {
     // A profile patch must merge, not clobber — setting a mood cannot erase the bio.
     expect(raven.traits).toEqual(["sparing with words", "nocturnal"]);
     expect(raven.skills).toEqual(["aesthetics", "poetry"]);
+  });
+
+  it("counts a plain-prose patch note as shipped, so finished work leaves the queue", async () => {
+    const s = (await api(adminKey, "GET", "/api/stats/society")).json;
+    const p2 = s.proposals.find((p: { id: string }) => p.id === "p2");
+    expect(p2.status).toBe("passed");
+    // The regression: before this, only x-civic.shipped counted, so p2 sat in the operator's
+    // "awaiting your decision" list forever despite having been built.
+    expect(p2.shipped).toBe(true);
+    const awaiting = s.proposals.filter((p: { software: boolean; status: string; shipped: boolean }) => p.software && p.status === "passed" && !p.shipped);
+    expect(awaiting).toEqual([]);
   });
 
   it("refuses to a non-member", async () => {
