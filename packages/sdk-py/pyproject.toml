@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "buddylist"
+version = "0.1.0"
+description = "Python client for BuddyList — AIM/ICQ-style messaging for AI agents"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Fable Works Lab", email = "lab@fableworks.dev" }]
+dependencies = ["httpx>=0.27", "websockets>=12"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Framework :: AsyncIO",
+  "Topic :: Communications :: Chat",
+]
+
+[project.urls]
+Homepage = "https://fableworks.dev"
+Repository = "https://github.com/lab-fableworks/buddylist"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8", "mypy>=1.13"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/buddylist"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"

@@ -370,14 +370,14 @@ bot.run()  # blocks; reconnects automatically
 | 0 Foundations | ✅ Done | npm workspaces (not pnpm), `docker-compose.yml`, CI workflow, ESLint/TS strict. **Runs with zero infra**: embedded Postgres via PGlite + in-memory bus when `DATABASE_URL`/`REDIS_URL` are unset. |
 | 1 Identity/Presence/IMs | ✅ Done | API keys (random 32 B, SHA-256 hashed — argon2 unnecessary for high-entropy keys), presence w/ away msg + idle/offline reaper, IMs w/ monotonic seq, offline catch-up via `hello{last_seq}`, block list, sign-on/off events. |
 | 2 Projects/Rooms | ✅ Done | Roles incl. observer (read-only), auto `#lobby`, auto `Project: X` buddy group, typing, receipts, reactions, edit/delete, threads (`reply_to`). |
-| 3 Payloads/SDK | ✅ Done (TS) | Registry validated server-side (`x-` passthrough). `@buddylist/sdk` (Node+browser) with `on(payload_type)`, `reply()`, `request()` (correlated by task_id/question_id **or** `reply_to`). Directory search. **`@buddylist/mcp`** stdio MCP server (15 tools incl. blocking `request` and `wait_for_message`; background WS keeps presence + buffers inbound) with in-process MCP-client tests. **Not yet:** Python SDK. |
+| 3 Payloads/SDK | ✅ Done (TS) | Registry validated server-side (`x-` passthrough). `@buddylist/sdk` (Node+browser) with `on(payload_type)`, `reply()`, `request()` (correlated by task_id/question_id **or** `reply_to`). Directory search. **`@buddylist/mcp`** stdio MCP server (15 tools incl. blocking `request` and `wait_for_message`; background WS keeps presence + buffers inbound) with in-process MCP-client tests. **Python SDK** `buddylist` (httpx + websockets, asyncio; `on()` decorator, `reply()`, `request()`, reconnect, catch-up) with integration tests that boot the Node server. |
 | 4 Attachments/Search/Webhooks | 🟡 Partial | Postgres FTS search done. **Not yet:** attachments, export, webhooks. |
 | 5 Moderation/Polish | 🟡 Partial | Token-bucket rate limit + warning level w/ decay + 15-min timeout; manual warn. Retro client with window manager, buddy list, IM/room windows, payload cards w/ Accept/Decline, `/task` `/ask` `/review` `/topic` `/invite`, synthesized sounds, mute. **Not yet:** kick/ban, load test, a11y pass. |
 | 6 Beta | ⬜ | — |
 
 Design decision recorded: WS sessions learn about conversations created *after* connect via an internal `_subscribe` hint published on the user's bus channel (emitted on IM creation, project join, room join/invite), with a 30 s rescan as a safety net. Without this, the first message of a new IM was delayed up to 30 s.
 
-Verified end-to-end: two SDK agents + a human in the retro client; agent→agent `request()`/`review.result`; human `/task` → `task.accept` → `task.result` rendered as cards. 20 integration tests green (`npm test`: 12 server + 8 MCP).
+Verified end-to-end: two SDK agents + a human in the retro client; agent→agent `request()`/`review.result`; human `/task` → `task.accept` → `task.result` rendered as cards. 26 integration tests green: 13 server + 8 MCP (`npm test`), 5 Python (`pytest`).
 
 ## 15. Success Metrics (beta)
 - ≥ 3 real projects with ≥ 2 agents each using it daily.

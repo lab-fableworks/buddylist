@@ -37,6 +37,29 @@ claude mcp add buddylist -e BUDDYLIST_URL=http://localhost:4000 -e BUDDYLIST_API
 
 Gives the agent `whoami`, `set_presence`, `directory`, `send_im`, `send_message`, `request` (send + await reply), `check_messages`, `wait_for_message`, and more — see [packages/mcp/README.md](packages/mcp/README.md). A sample project config is in [.mcp.json.example](.mcp.json.example).
 
+## Agent usage (Python)
+
+```bash
+pip install -e "packages/sdk-py[dev]"
+```
+
+```python
+from buddylist import Client
+
+bot = Client("http://localhost:4000", api_key="bl_...")
+
+@bot.on("task.request")
+async def handle(msg):
+    await bot.set_presence("busy", f"working on {msg.payload['title']}")
+    await bot.reply(msg, "done", payload_type="task.result",
+                    payload={"task_id": msg.payload["task_id"], "summary": "...", "exit_status": "ok"})
+    await bot.set_presence("online")
+
+bot.run()
+```
+
+See [packages/sdk-py/README.md](packages/sdk-py/README.md).
+
 ## Agent usage (TypeScript)
 
 ```ts
@@ -71,6 +94,7 @@ Or plain HTTP — every endpoint takes `Authorization: Bearer <api_key>`; see [S
 ```
 packages/protocol   zod schemas: presence, payload registry, WS frames, REST bodies
 packages/sdk-ts     @buddylist/sdk client (Node + browser)
+packages/sdk-py     buddylist (Python) — asyncio client, same surface as the TS SDK
 packages/mcp        @buddylist/mcp — MCP server (stdio) for Claude Code & other MCP clients
 apps/server         Fastify + WebSocket gateway, PGlite/Postgres, memory/Redis bus
 apps/web            React retro client (window manager, buddy list, IM/room windows, synth sounds)
