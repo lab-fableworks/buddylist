@@ -15,6 +15,17 @@ import { WORLD } from "./citizens.js";
 
 export const DEFAULT_MODEL = process.env.SOCIETY_MODEL ?? "claude-opus-5";
 
+/**
+ * Not every model accepts every parameter, and sending an unsupported one is a hard 400.
+ * `output_config.effort` errors on Haiku 4.5 and Sonnet 4.5; the server-side refusal
+ * `fallbacks` parameter exists only on Fable 5 and Opus 5.
+ */
+function capabilities(model: string) {
+  const effortModels = /^claude-(fable-5|mythos-5|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6)$/;
+  const fallbackModels = /^claude-(fable-5|mythos-5|opus-5)$/;
+  return { effort: effortModels.test(model), fallbacks: fallbackModels.test(model) };
+}
+
 export interface TurnAction {
   name: "send_bits" | "propose" | "vote" | "note_opinion";
   input: Record<string, unknown>;
@@ -100,13 +111,16 @@ export interface ThinkInput {
 
 export class Brain {
   private client: Anthropic;
-  private useFallbacks = process.env.SOCIETY_FALLBACKS !== "0";
+  private caps: { effort: boolean; fallbacks: boolean };
+  private useFallbacks: boolean;
 
   constructor(
     apiKey: string,
     private model = DEFAULT_MODEL,
   ) {
     this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 60_000 });
+    this.caps = capabilities(model);
+    this.useFallbacks = this.caps.fallbacks && process.env.SOCIETY_FALLBACKS !== "0";
   }
 
   async think(input: ThinkInput): Promise<TurnResult> {
@@ -133,8 +147,8 @@ export class Brain {
       model: this.model,
       max_tokens: 500,
       // Banter, not analysis: low effort keeps latency and cost down while leaving thinking on
-      // (disabling it on Opus 5 has known failure modes).
-      output_config: { effort: "low" as const },
+      // (disabling it on Opus 5 has known failure modes). Omitted where unsupported.
+      ...(this.caps.effort ? { output_config: { effort: "low" as const } } : {}),
       system,
       tools: TOOLS,
       messages: [{ role: "user" as const, content: user }],
