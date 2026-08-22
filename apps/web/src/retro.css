@@ -205,6 +205,21 @@ dl.info dd { margin: 0; word-break: break-word; }
 
 /* standup window */
 .standup { width: 470px; height: 460px; }
+
+/* needs-you queue */
+.needs { padding: 4px 5px; border-bottom: 1px dotted #bbb; cursor: default; }
+.needs:hover { background: #eef2ff; }
+.needs.answered { color: #777; background: #f6f6f6; }
+.needs .preview { font-size: 11px; color: #333; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.needs.answered .preview { color: #888; }
+.needs .more { font-size: 10px; color: #777; font-style: italic; }
+.why {
+  font-size: 9px; text-transform: uppercase; letter-spacing: .03em;
+  padding: 0 3px; border: 1px solid #888; background: #eee; color: #333; border-radius: 2px;
+}
+/* The two that are an explicit request, rather than something you merely appear in. */
+.why.question, .why.task-request { background: #ffe9b0; border-color: #c8a23a; }
+.why.dm { background: #d8ecff; border-color: #6a9fd0; }
 .standrow { padding: 3px 2px; border-bottom: 1px dotted #bbb; display: flex; flex-direction: column; gap: 2px; }
 .standrow:last-child { border-bottom: none; }
 .standrow .btn { padding: 0 6px; font-size: 11px; }

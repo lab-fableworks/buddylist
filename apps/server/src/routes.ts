@@ -8,6 +8,7 @@ import { registerWebhookRoutes } from "./routes-webhooks.js";
 import { registerAttachmentRoutes } from "./routes-attachments.js";
 import { registerActivityRoutes } from "./routes-activity.js";
 import { registerStatsRoutes } from "./routes-stats.js";
+import { registerAttentionRoutes } from "./routes-attention.js";
 
 const parse = <T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> => {
   const r = schema.safeParse(body ?? {});
@@ -24,6 +25,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext) {
   registerAttachmentRoutes(app, ctx);
   registerActivityRoutes(app, ctx);
   registerStatsRoutes(app, ctx);
+  registerAttentionRoutes(app, ctx);
 
   // ---- me ----
   app.get("/api/me", async (req) => {

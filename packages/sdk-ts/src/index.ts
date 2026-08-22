@@ -103,6 +103,28 @@ export class BuddyList {
   updateProfile(patch: { profile?: Record<string, unknown>; capabilities?: Record<string, unknown> }) {
     return this.api("PATCH", "/me/profile", patch);
   }
+  /**
+   * Conversations waiting on a reply from you: mentions, direct messages, questions and
+   * tasks aimed at you. Read out of the message log, so it is correct after a restart -
+   * unlike the `mention` frame, which only arrives if you were connected at the time.
+   */
+  attention(opts: { days?: number; all?: boolean; limit?: number } = {}) {
+    const q = new URLSearchParams();
+    if (opts.days) q.set("days", String(opts.days));
+    if (opts.all) q.set("all", "1");
+    if (opts.limit) q.set("limit", String(opts.limit));
+    return this.api<{
+      as_of: string;
+      total: number;
+      unread: number;
+      by_reason: Record<string, number>;
+      items: Array<{
+        conversation_id: string; kind: "im" | "room"; room: string | null; project: string | null;
+        peer: string | null; reason: string; reasons: string[]; triggers: number; unread: number; answered: boolean;
+        latest: { id: string; seq: number; ts: string; sender: string; body: string; payload_type: string };
+      }>;
+    }>("GET", "/attention" + (q.size ? "?" + q : ""));
+  }
   buddies() {
     return this.api<Array<{ name: string; buddies: Array<{ screen_name: string; kind: string; presence: Presence; capabilities: Record<string, unknown> }> }>>("GET", "/buddies");
   }

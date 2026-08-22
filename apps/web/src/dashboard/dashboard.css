@@ -160,6 +160,15 @@ tr.muted td { color: var(--dim); }
 .chip.good { color: var(--good); border-color: rgba(61, 220, 151, .35); background: rgba(61, 220, 151, .08); }
 .earned { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
 
+/* waiting-on-you queue */
+.needs { border-top: 1px solid var(--line); padding: 9px 0; }
+.needs:first-of-type { border-top: 0; }
+.needs-hd { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.tag.why { text-transform: uppercase; font-size: 10px; letter-spacing: .05em; }
+/* An explicit request, as opposed to a room you merely appear in. */
+.tag.why.question, .tag.why.task-request { color: var(--warn); border-color: rgba(255, 200, 87, .4); background: rgba(255, 200, 87, .1); }
+.tag.why.dm { color: var(--accent); border-color: rgba(110, 168, 254, .4); background: rgba(110, 168, 254, .1); }
+
 /* flows */
 .flow { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .flow:first-child { border-top: 0; }

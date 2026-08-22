@@ -36,6 +36,27 @@ interface Stats {
   }>;
 }
 
+/** GET /api/attention - conversations waiting on a reply from the signed-in operator. */
+interface Attention {
+  total: number;
+  unread: number;
+  by_reason: Record<string, number>;
+  items: Array<{
+    conversation_id: string; kind: string; room: string | null; project: string | null; peer: string | null;
+    reason: string; triggers: number; unread: number; answered: boolean;
+    latest: { seq: number; ts: string; sender: string; body: string; payload_type: string };
+  }>;
+}
+
+const REASON_LABEL: Record<string, string> = {
+  question: "asked you",
+  "task.request": "task for you",
+  "review.request": "review request",
+  handoff: "handed to you",
+  dm: "direct message",
+  mention: "mentioned you",
+};
+
 const api = async <T,>(path: string, key: string): Promise<T> => {
   const r = await fetch("/api" + path, { headers: { authorization: `Bearer ${key}` } });
   const j = await r.json().catch(() => ({}));
@@ -94,6 +115,7 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
   const [projects, setProjects] = useState<Array<{ slug: string; name: string }>>([]);
   const [slug, setSlug] = useState(localStorage.getItem("bl.dash.project") ?? "society");
   const [stats, setStats] = useState<Stats>();
+  const [needs, setNeeds] = useState<Attention>();
   const [err, setErr] = useState<string>();
   const [live, setLive] = useState(true);
 
@@ -106,7 +128,9 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
 
   const load = useCallback(async () => {
     try {
-      setStats(await api<Stats>(`/stats/${slug}?days=14`, apiKey));
+      const [s, n] = await Promise.all([api<Stats>(`/stats/${slug}?days=14`, apiKey), api<Attention>("/attention?limit=25", apiKey)]);
+      setStats(s);
+      setNeeds(n);
       setErr(undefined);
     } catch (e) {
       setErr((e as Error).message);
@@ -155,6 +179,27 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
             <Stat n={supply.toLocaleString()} l="bits in circulation" trend={`${stats.economy.minted.toLocaleString()} minted · ${stats.economy.moved.toLocaleString()} traded`} />
             <Stat n={String(stats.proposals.length)} l="proposals" trend={`${openProps} open · ${awaiting.length} awaiting you`} />
           </div>
+
+          {needs && needs.items.length > 0 && (
+            <div className="card" style={{ borderColor: "rgba(255,200,87,.45)", marginBottom: 14 }}>
+              <h2>Waiting on you — {needs.total}</h2>
+              {needs.items.map((w) => (
+                <div className="needs" key={w.conversation_id}>
+                  <div className="needs-hd">
+                    <span className={"tag why " + w.reason.replace(".", "-")}>{REASON_LABEL[w.reason] ?? w.reason}</span>
+                    <b>{w.kind === "im" ? w.peer : "#" + w.room}</b>
+                    {w.unread > 0 && <span className="tag">{w.unread} unread</span>}
+                    <span style={{ flex: 1 }} />
+                    <span className="tip-note">{ago(w.latest.ts)}</span>
+                  </div>
+                  <div className="tip-note">
+                    <b>{w.latest.sender}:</b> {w.latest.body.replace(/\s+/g, " ").slice(0, 160) || `(${w.latest.payload_type})`}
+                  </div>
+                  {w.triggers > 1 && <div className="tip-note dim">+{w.triggers - 1} more in this conversation</div>}
+                </div>
+              ))}
+            </div>
+          )}
 
           {awaiting.length > 0 && (
             <div className="card" style={{ borderColor: "rgba(177,140,255,.4)", marginBottom: 14 }}>

@@ -9,6 +9,21 @@ type ActivityView = { screen_name: string; kind: string; presence: Presence; act
 type Standup = { project: string; as_of: string; members: Array<{ screen_name: string; kind: string; role: string; presence: Presence; activity: Activity }> };
 type Group = { name: string; buddies: Buddy[] };
 type Conv = { id: string; kind: "im" | "room"; name: string | null; peer: string | null; last_seq: number; last_read_seq: number };
+/** One conversation that is waiting on you, from GET /attention. */
+type Waiting = {
+  conversation_id: string;
+  kind: "im" | "room";
+  room: string | null;
+  project: string | null;
+  peer: string | null;
+  reason: string;
+  reasons: string[];
+  triggers: number;
+  unread: number;
+  answered: boolean;
+  latest: { id: string; seq: number; ts: string; sender: string; body: string; payload_type: string };
+};
+type Attention = { as_of: string; total: number; unread: number; by_reason: Record<string, number>; items: Waiting[] };
 
 // ---------------- sign-on ----------------
 export function App() {
@@ -77,6 +92,8 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
   const [muted, setMutedState] = useState(isMuted());
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [tab, setTab] = useState<"buddies" | "rooms">("buddies");
+  /** How many conversations are waiting on a reply, shown in the menu bar. */
+  const [needsMe, setNeedsMe] = useState(0);
   const openConvRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
@@ -120,6 +137,22 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
     ];
     return () => offs.forEach((o) => o());
   }, [client]);
+
+  // The count is derived server-side from the log, so it survives a reload and a signoff -
+  // unlike the mention frames, which only reach you if you happen to be connected.
+  const countNeeds = useCallback(async () => {
+    try {
+      setNeedsMe((await client.api<Attention>("GET", "/attention?limit=200")).total);
+    } catch {
+      /* transient; the badge is not worth an error dialog */
+    }
+  }, [client]);
+  useEffect(() => {
+    void countNeeds();
+    const offs = [client.on("mention", () => void countNeeds()), client.on("message", () => void countNeeds())];
+    const t = setInterval(countNeeds, 30_000);
+    return () => (offs.forEach((o) => o()), clearInterval(t));
+  }, [client, countNeeds]);
 
   const openConversation = useCallback(
     (c: Conv) => {
@@ -166,6 +199,14 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
   const openNewAgent = () => wm.open({ id: "newagent", title: "Register Agent", icon: "🤖", className: "dialog", render: ({ close }) => <NewAgent client={client} onDone={() => (refresh(), close())} /> });
   const openSearch = () => wm.open({ id: "search", title: "Find Messages", icon: "🔍", className: "dialog", render: () => <Search client={client} /> });
   const openStandup = () => wm.open({ id: "standup", title: "Who's Working On What", icon: "⚙", className: "standup", render: () => <StandupWindow client={client} onAsk={openInfo} onIM={openIM} /> });
+  const openAttention = () =>
+    wm.open({
+      id: "attention",
+      title: "Needs You",
+      icon: "❗",
+      className: "standup",
+      render: () => <AttentionWindow client={client} onOpen={(w) => openConversation(waitingToConv(w))} />,
+    });
 
   const rooms = convs.filter((c) => c.kind === "room");
   const totalUnread = Object.values(unread).reduce((a, b) => a + b, 0);
@@ -178,6 +219,7 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
         <span onClick={openNewAgent}>Agents</span>
         <span onClick={openSearch}>Find</span>
         <span onClick={openStandup}>Working On</span>
+        <span onClick={openAttention}>Needs You{needsMe ? ` (${needsMe})` : ""}</span>
         <span onClick={() => (setMuted(!muted), setMutedState(!muted))}>{muted ? "🔇" : "🔊"}</span>
         <span onClick={() => (sfx.doorClose(), onSignOff())}>Sign Off</span>
       </div>
@@ -584,6 +626,102 @@ function WorkingOn({ client, screenName }: { client: BuddyList; screenName: stri
 }
 
 /** Project-wide standup: what every agent and human on a project is doing right now. */
+/** An attention item points at a conversation; this is the shape the window manager opens. */
+function waitingToConv(w: Waiting): Conv {
+  return { id: w.conversation_id, kind: w.kind, name: w.room, peer: w.peer, last_seq: w.latest.seq, last_read_seq: 0 };
+}
+
+const REASON_LABEL: Record<string, string> = {
+  question: "asked you",
+  "task.request": "task for you",
+  "review.request": "review request",
+  handoff: "handed to you",
+  dm: "direct message",
+  mention: "mentioned you",
+};
+
+const when = (iso: string) => {
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+};
+
+/**
+ * Everything waiting on a reply from you.
+ *
+ * Deliberately keyed on "have you answered", not "have you read". Marking things read is how
+ * a queue empties itself without anything actually being dealt with, and the thing worth
+ * knowing is who is still waiting on you.
+ */
+function AttentionWindow({ client, onOpen }: { client: BuddyList; onOpen: (w: Waiting) => void }) {
+  const [data, setData] = useState<Attention>();
+  const [err, setErr] = useState<string>();
+  const [showAnswered, setShowAnswered] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setData(await client.api<Attention>("GET", `/attention?limit=100${showAnswered ? "&all=1" : ""}`));
+      setErr(undefined);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }, [client, showAnswered]);
+
+  useEffect(() => {
+    void load();
+    const offs = [client.on("mention", () => void load()), client.on("message", () => void load())];
+    const t = setInterval(load, 20_000);
+    return () => (offs.forEach((o) => o()), clearInterval(t));
+  }, [client, load]);
+
+  const items = data?.items ?? [];
+  return (
+    <div className="body">
+      <div className="row">
+        <b style={{ flex: 1 }}>
+          {data ? (items.length === 0 ? "Nothing is waiting on you." : `${items.filter((i) => !i.answered).length} waiting on you`) : "Loading…"}
+        </b>
+        <label className="row" style={{ gap: 4, fontSize: 11 }}>
+          <input type="checkbox" checked={showAnswered} onChange={(e) => setShowAnswered(e.target.checked)} /> include answered
+        </label>
+        <button className="btn" onClick={load}>Refresh</button>
+      </div>
+      {err && <div style={{ color: "#c00" }}>{err}</div>}
+      <div className="sunken tree" style={{ maxHeight: 340, overflowY: "auto" }}>
+        {items.length === 0 && !err && <div style={{ padding: 8, color: "#666" }}>No mentions, questions, or unanswered messages.</div>}
+        {items.map((w) => (
+          <div
+            key={w.conversation_id}
+            className={"needs" + (w.answered ? " answered" : "")}
+            onDoubleClick={() => onOpen(w)}
+            title="Double-click to open the conversation"
+          >
+            <div className="row" style={{ gap: 6 }}>
+              <span className={"why " + w.reason.replace(".", "-")}>{REASON_LABEL[w.reason] ?? w.reason}</span>
+              <b>{w.kind === "im" ? w.peer : "#" + w.room}</b>
+              {w.project && w.kind === "room" && <span style={{ color: "#777", fontSize: 11 }}>{w.project}</span>}
+              <span style={{ flex: 1 }} />
+              {w.unread > 0 && <span className="badge">{w.unread}</span>}
+              <span style={{ color: "#666", fontSize: 11 }}>{when(w.latest.ts)}</span>
+            </div>
+            <div className="preview">
+              <b>{w.latest.sender}:</b> {w.latest.body.replace(/\s+/g, " ").slice(0, 140) || `(${w.latest.payload_type})`}
+            </div>
+            {w.triggers > 1 && <div className="more">+{w.triggers - 1} more in this conversation</div>}
+            {w.answered && <div className="more">answered — you replied after this</div>}
+          </div>
+        ))}
+      </div>
+      <div className="statusbar">
+        <span className="cell">{data?.unread ?? 0} unread</span>
+        <span className="cell">{Object.entries(data?.by_reason ?? {}).map(([k, n]) => `${REASON_LABEL[k] ?? k}: ${n}`).join(" · ") || "—"}</span>
+      </div>
+    </div>
+  );
+}
+
 function StandupWindow({ client, onAsk, onIM }: { client: BuddyList; onAsk: (n: string) => void; onIM: (n: string) => void }) {
   const [projects, setProjects] = useState<Array<{ slug: string; name: string }>>([]);
   const [slug, setSlug] = useState<string>("");
