@@ -3,7 +3,7 @@
 #   fly volumes create buddylist_data --size 1
 #   fly secrets set DATABASE_URL=... ADMIN_SCREEN_NAME=... ADMIN_EMAIL=...
 #   fly deploy
-app = "buddylist"
+app = "buddylist-fableworks"
 # Seattle: closest Fly region to the Supabase project in us-west-2 (Oregon).
 # Keeping app and database on the same coast keeps query RTT ~10ms instead of ~70ms,
 # which matters because a single message send makes several round trips.

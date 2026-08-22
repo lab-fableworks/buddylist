@@ -118,7 +118,7 @@ fly launch --no-deploy --copy-config
 fly volumes create buddylist_data --size 1 --region sea
 fly secrets set DATABASE_URL="<supabase session-pooler string>"
 fly deploy
-fly certs add chat.fableworks.dev     # then CNAME chat -> buddylist.fly.dev
+fly certs add chat.fableworks.dev     # then CNAME chat -> buddylist-fableworks.fly.dev
 ```
 
 The server serves the web client on its own origin, so there is no CORS setup and no second host.

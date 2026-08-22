@@ -11,6 +11,7 @@ Cloudflare is not needed: DNS stays at Squarespace and Fly issues the TLS certif
 
 | Piece | Value |
 |---|---|
+| Fly app | `buddylist-fableworks` → `buddylist-fableworks.fly.dev` |
 | Supabase project | `ouebawamdnxhgbujdqkw` (org `lab-fableworks`, Free plan) |
 | Database region | **West US (Oregon) · us-west-2** |
 | Fly region | **`sea` (Seattle)** — deliberately matched to the database; see below |
@@ -86,7 +87,10 @@ Then in **Squarespace → Settings → Domains → fableworks.dev → DNS Settin
 
 | Type | Host | Data |
 |---|---|---|
-| CNAME | `chat` | `buddylist.fly.dev` |
+| CNAME | `chat` | `buddylist-fableworks.fly.dev` |
+
+The app is named `buddylist-fableworks` rather than `buddylist` because Fly app names share one
+global namespace — a distinctive name avoids a collision that would silently invalidate this record.
 
 Fly validates and issues the certificate automatically once DNS propagates (usually minutes,
 occasionally up to an hour). Check with:
