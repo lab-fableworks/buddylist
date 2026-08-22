@@ -52,15 +52,27 @@ beyond that, move attachments to S3/R2 behind the existing `Storage` interface i
 
 ### 3. Set secrets
 
-Get the connection string from **Supabase → Connect → Direct → Session pooler**, then:
+Verified connection parameters for this project (**Supabase → Connect → Direct → Session pooler**):
+
+| Parameter | Value |
+|---|---|
+| host | `aws-0-us-west-2.pooler.supabase.com` |
+| port | `5432` |
+| database | `postgres` |
+| user | `postgres.ouebawamdnxhgbujdqkw` |
 
 ```bash
-fly secrets set DATABASE_URL="postgresql://postgres.ouebawamdnxhgbujdqkw:YOUR-PASSWORD@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
-fly secrets set ADMIN_SCREEN_NAME="zgmcginn" ADMIN_EMAIL="lab@fableworks.dev"
+fly secrets set DATABASE_URL="postgresql://postgres.ouebawamdnxhgbujdqkw:YOUR-PASSWORD@aws-0-us-west-2.pooler.supabase.com:5432/postgres" --app buddylist-fableworks
 ```
 
 Run this yourself — the string contains your database password, so it should not be pasted
 into a chat transcript or committed.
+
+Two gotchas:
+
+- **The password is not retrievable.** Supabase shows it once at project creation; after that the
+  only option is *Reset database password* on the same dialog, which invalidates the old one.
+- **Percent-encode special characters** in the password, or the URL will parse wrongly.
 
 ### 4. Deploy
 
