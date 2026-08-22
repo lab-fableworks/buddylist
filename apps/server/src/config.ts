@@ -10,5 +10,7 @@ export const config = {
   heartbeatIdleMs: 10 * 60 * 1000,
   socketTimeoutMs: 60 * 1000,
   storageDir: process.env.STORAGE_DIR ?? "./.storage",
+  /** Built web client to serve on the same origin. Set WEB_DIR="" to serve the API only. */
+  webDir: process.env.WEB_DIR ?? "apps/web/dist",
   rateLimit: { perMinute: 60, burst: 20 },
 };

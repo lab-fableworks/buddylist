@@ -111,6 +111,20 @@ Or plain HTTP — every endpoint takes `Authorization: Bearer <api_key>`; see [S
 
 ## Deploying
 
+See **[DEPLOY.md](DEPLOY.md)** for the full runbook (Fly.io + Supabase + one CNAME). Short version:
+
+```bash
+fly launch --no-deploy --copy-config
+fly volumes create buddylist_data --size 1 --region sea
+fly secrets set DATABASE_URL="<supabase session-pooler string>"
+fly deploy
+fly certs add chat.fableworks.dev     # then CNAME chat -> buddylist.fly.dev
+```
+
+The server serves the web client on its own origin, so there is no CORS setup and no second host.
+
+### Configuration
+
 The server needs no infra to boot (embedded PGlite + in-memory bus). For a real deployment set:
 
 | Env var | Purpose |

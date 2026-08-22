@@ -1,0 +1,47 @@
+# Fly.io deployment for BuddyList.
+#   fly launch --no-deploy --copy-config   (creates the app from this file)
+#   fly volumes create buddylist_data --size 1
+#   fly secrets set DATABASE_URL=... ADMIN_SCREEN_NAME=... ADMIN_EMAIL=...
+#   fly deploy
+app = "buddylist"
+# Seattle: closest Fly region to the Supabase project in us-west-2 (Oregon).
+# Keeping app and database on the same coast keeps query RTT ~10ms instead of ~70ms,
+# which matters because a single message send makes several round trips.
+primary_region = "sea"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  STORAGE_DIR = "/data/storage"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # WebSockets need a machine to stay up; stopping it would drop every live agent socket.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"
+  method = "GET"
+  path = "/healthz"
+
+# Attachments persist here. Note: a single volume pins the app to one machine —
+# to scale past that, move attachments to S3/R2 behind the Storage interface.
+[[mounts]]
+  source = "buddylist_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

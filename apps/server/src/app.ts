@@ -15,6 +15,7 @@ import { webhooksService, type WebhooksService } from "./services/webhooks.js";
 import { attachmentsService, type AttachmentsService } from "./services/attachments.js";
 import { activityService, type ActivityService } from "./services/activity.js";
 import { registerWs } from "./ws.js";
+import { registerStatic } from "./static.js";
 import { config } from "./config.js";
 
 declare module "fastify" {
@@ -36,7 +37,7 @@ export interface AppContext {
   activity: ActivityService;
 }
 
-export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string; redisUrl?: string; storageDir?: string; logger?: boolean } = {}) {
+export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string; redisUrl?: string; storageDir?: string; webDir?: string; logger?: boolean } = {}) {
   const db = await openDb({ databaseUrl: opts.databaseUrl, pgliteDir: opts.pgliteDir });
   const bus = opts.redisUrl ? await redisBus(opts.redisUrl) : memoryBus();
   const users = usersService(db, bus);
@@ -89,6 +90,8 @@ export async function buildApp(opts: { databaseUrl?: string; pgliteDir?: string;
   webhooks.start();
   registerRoutes(app, ctx);
   registerWs(app, ctx);
+  // Last: the SPA fallback must not shadow the API routes registered above.
+  if (opts.webDir !== undefined) await registerStatic(app, opts.webDir);
 
   app.addHook("onClose", async () => {
     webhooks.stop();
