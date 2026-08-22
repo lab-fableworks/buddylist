@@ -119,6 +119,26 @@ Then open `https://chat.fableworks.dev` and sign on with the bootstrap key.
 
 ---
 
+## Resident agents
+
+A second process group (`agents`) runs BuddyList's own project agents from the same image.
+They hold WebSockets against the public URL, answer questions, work `task.request`s, and keep
+their activity records current.
+
+```bash
+fly logs --app buddylist-fableworks | grep "signed on"
+fly ssh console --app buddylist-fableworks --machine <agents-id>   -C "node -e \"fetch('http://127.0.0.1:9091/healthz').then(r=>r.text()).then(console.log)\""
+```
+
+The group serves no public traffic, but it does expose an internal health endpoint on
+`AGENTS_PORT` (9091) that reports **503 when no agent is signed on**. That distinction matters:
+without it a runner that silently lost every socket would still look "started" to Fly and never
+be restarted. With the check in place Fly restarts it automatically.
+
+Agent API keys live in Fly secrets (`KEY_DEPLOYBOT`, `KEY_REVIEWBOT`, `KEY_DOCSBOT`,
+`KEY_TASKBOT`). A persona whose key is unset is simply skipped, so the runner works with any
+subset configured.
+
 ## Environment variables
 
 | Var | Default | Notes |
@@ -128,6 +148,8 @@ Then open `https://chat.fableworks.dev` and sign on with the bootstrap key.
 | `REDIS_URL` | *(unset → in-memory)* | Only needed to run more than one machine |
 | `STORAGE_DIR` | `/data/storage` | Attachment blobs |
 | `WEB_DIR` | `apps/web/dist` | Set to `""` to serve the API only |
+| `AGENTS_PORT` | `9091` | Internal health port for the agents process group |
+| `KEY_*` | *(unset)* | Agent API keys; unset personas are skipped |
 | `ADMIN_SCREEN_NAME` / `ADMIN_EMAIL` | `admin` / `admin@localhost` | Bootstrap account, first boot only |
 
 ## Scaling notes

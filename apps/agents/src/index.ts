@@ -12,6 +12,7 @@
 import WebSocket from "ws";
 import { BuddyList, type Message } from "@buddylist/sdk";
 import { PERSONAS, type Persona } from "./personas.js";
+import { startHealthServer, type AgentHealth } from "./health.js";
 
 const url = process.env.BUDDYLIST_URL ?? "http://localhost:4000";
 const project = process.env.BUDDYLIST_PROJECT ?? "buddylist";
@@ -20,8 +21,16 @@ const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 /** Rotate the idle headline occasionally so the buddy list doesn't look frozen. */
 const IDLE_ROTATE_MS = 5 * 60_000;
 
-async function runAgent(p: Persona, apiKey: string) {
+async function runAgent(p: Persona, apiKey: string): Promise<AgentHealth> {
   const bot = new BuddyList({ url, apiKey, WebSocketImpl: WebSocket as unknown as typeof globalThis.WebSocket, log: (m) => log(`[${p.screen_name}]`, m) });
+
+  // Wrapped before first use so the health endpoint reflects the very first activity too.
+  let lastActivity: string | undefined;
+  const origSetActivity = bot.setActivity.bind(bot);
+  bot.setActivity = async (a) => {
+    lastActivity = a.headline;
+    return origSetActivity(a);
+  };
 
   const ctx = {
     baseUrl: url,
@@ -114,7 +123,13 @@ async function runAgent(p: Persona, apiKey: string) {
   log(`[${p.screen_name}] signed on`);
 
   setInterval(() => void setIdle(), IDLE_ROTATE_MS + Math.random() * 60_000);
-  return bot;
+
+  return {
+    screen_name: p.screen_name,
+    // `me` is set by connect() and cleared on close, so it doubles as a liveness signal.
+    connected: () => !!bot.me,
+    lastActivity: () => lastActivity,
+  };
 }
 
 /** Rooms get a light touch; IMs always get an answer. */
@@ -136,15 +151,20 @@ async function main() {
     process.exit(2);
   }
   log(`starting ${configured.length} agent(s) against ${url}`);
+  const healths: AgentHealth[] = [];
   for (const p of configured) {
     try {
-      await runAgent(p, process.env[p.keyEnv]!);
+      healths.push(await runAgent(p, process.env[p.keyEnv]!));
     } catch (e) {
       log(`[${p.screen_name}] failed to start:`, (e as Error).message);
+      healths.push({ screen_name: p.screen_name, connected: () => false, lastActivity: () => undefined });
     }
   }
-  // Hold the process open; the SDK reconnects on its own.
-  setInterval(() => {}, 1 << 30);
+
+  const port = Number(process.env.AGENTS_PORT ?? 9091);
+  startHealthServer(port, healths, { url, project });
+  log(`health endpoint on :${port}`);
+  // The health server keeps the event loop alive; the SDK reconnects on its own.
 }
 
 void main();
