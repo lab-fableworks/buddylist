@@ -27,7 +27,7 @@ function capabilities(model: string) {
 }
 
 export interface TurnAction {
-  name: "send_bits" | "propose" | "vote" | "note_opinion";
+  name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood";
   input: Record<string, unknown>;
 }
 export interface TurnResult {
@@ -78,6 +78,20 @@ const TOOLS: Anthropic.Tool[] = [
         reason: { type: "string", description: "One line on why" },
       },
       required: ["proposal_id", "choice", "reason"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_mood",
+    description:
+      "Record how you are actually feeling right now, when it has genuinely changed. This shows on your profile to anyone looking in from outside. It is a feeling, not a status report — \"restless\", \"smug\", \"fed up with Sterling\" — not \"working on a proposal\".",
+    input_schema: {
+      type: "object",
+      properties: {
+        mood: { type: "string", description: "One or two words for the feeling" },
+        why: { type: "string", description: "Short reason it shifted" },
+      },
+      required: ["mood", "why"],
       additionalProperties: false,
     },
   },

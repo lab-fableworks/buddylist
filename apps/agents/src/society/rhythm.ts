@@ -32,6 +32,31 @@ export const RHYTHMS: Record<string, Rhythm> = {
 
 const DEFAULT: Rhythm = { awake: [8, 23], breakChance: 0.12, doing: ["stepped away", "busy with something"] };
 
+/**
+ * A resident's schedule and disposition in words, for their public profile. The dashboard
+ * cannot see into the agents process, so anything a human should know about a resident has to
+ * be published by the resident — not inferred by the viewer.
+ */
+export function traitsOf(name: string, chattiness: number): string[] {
+  const r = RHYTHMS[name] ?? DEFAULT;
+  const [from, to] = r.awake;
+  const hours = to - from + (to < from ? 24 : 0);
+  const traits = [
+    chattiness >= 0.9 ? "never stops talking" : chattiness >= 0.7 ? "talkative" : chattiness >= 0.55 ? "speaks when it matters" : "sparing with words",
+    from >= 17 || from <= 4 ? "nocturnal" : from <= 6 ? "early riser" : "keeps office hours",
+    hours >= 16 ? "around most of the day" : hours <= 11 ? "here in a narrow window" : "",
+    r.breakChance >= 0.15 ? "wanders off mid-conversation" : r.breakChance <= 0.09 ? "stays at the desk" : "",
+  ];
+  return traits.filter(Boolean);
+}
+
+/** Their waking window, as a human reads a clock. */
+export function hoursOf(name: string): string {
+  const [from, to] = (RHYTHMS[name] ?? DEFAULT).awake;
+  const pad = (h: number) => `${String(h).padStart(2, "0")}:00`;
+  return `${pad(from)}–${pad(to)} UTC`;
+}
+
 interface State {
   onBreakUntil: number;
   reason: string;

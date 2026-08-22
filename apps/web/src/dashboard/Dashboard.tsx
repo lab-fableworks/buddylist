@@ -26,6 +26,13 @@ interface Stats {
     screen_name: string; kind: string; role: string; bits: number;
     presence: { state: string; message?: string };
     activity: { headline?: string; step?: string; detail?: string; progress?: number } | null;
+    bio: string | null;
+    traits: string[];
+    hours: string | null;
+    /** Self-reported. `at` is carried so a stale mood can be shown as stale. */
+    mood: { word: string; why: string; at: string } | null;
+    skills: string[];
+    learned: Array<{ skill: string; evidence: string }>;
   }>;
 }
 
@@ -186,18 +193,7 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
 
             <div className="card">
               <h2>Residents</h2>
-              {stats.members.map((m) => (
-                <div className="person" key={m.screen_name}>
-                  <div className="avatar" style={{ background: `hsl(${hue(m.screen_name)} 70% 62%)` }}>{m.screen_name.slice(0, 2)}</div>
-                  <div className="who">
-                    <div className="name">
-                      {m.screen_name} <span className={"dot " + m.presence.state} style={{ display: "inline-block", width: 7, height: 7, borderRadius: 4, marginLeft: 2 }} />
-                    </div>
-                    <div className="act">{m.activity?.headline ?? m.presence.message ?? m.presence.state}</div>
-                  </div>
-                  <div className="bits">{m.bits > 0 ? `${m.bits}b` : ""}</div>
-                </div>
-              ))}
+              {stats.members.map((m) => <Person key={m.screen_name} m={m} />)}
             </div>
           </div>
 
@@ -255,6 +251,90 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * A resident, with everything known about them on hover.
+ *
+ * The card shows only what a glance needs; character, skills, and mood are one hover away
+ * rather than four lines of permanent clutter across eight residents. Mood is self-reported
+ * and stamped — an agent that has not said how it feels in six hours shows as stale, because
+ * a confidently-wrong mood is worse than no mood.
+ */
+function Person({ m }: { m: Stats["members"][number] }) {
+  const moodAge = m.mood ? (Date.now() - Date.parse(m.mood.at)) / 3600_000 : 0;
+  const stale = moodAge > 6;
+  return (
+    <div className="person" tabIndex={0}>
+      <div className="avatar" style={{ background: `hsl(${hue(m.screen_name)} 70% 62%)` }}>{m.screen_name.slice(0, 2)}</div>
+      <div className="who">
+        <div className="name">
+          {m.screen_name} <span className={"dot " + m.presence.state} style={{ display: "inline-block", width: 7, height: 7, borderRadius: 4, marginLeft: 2 }} />
+        </div>
+        <div className="act">{m.activity?.headline ?? m.presence.message ?? m.presence.state}</div>
+      </div>
+      {m.mood && !stale && <span className="mood">{m.mood.word}</span>}
+      <div className="bits">{m.bits > 0 ? `${m.bits}b` : ""}</div>
+
+      <div className="tip" role="tooltip">
+        <div className="tip-hd">
+          <b>{m.screen_name}</b>
+          <span className={"tag " + m.presence.state}>{m.presence.message ?? m.presence.state}</span>
+          {m.kind === "human" && <span className="tag">human</span>}
+        </div>
+        {m.bio && <div className="tip-bio">{m.bio}</div>}
+
+        {m.traits.length > 0 && (
+          <div className="tip-sec">
+            <h4>Character</h4>
+            <div className="chips">{m.traits.map((t) => <span className="chip" key={t}>{t}</span>)}</div>
+            {m.hours && <div className="tip-note">Usually up {m.hours}</div>}
+          </div>
+        )}
+
+        {m.skills.length > 0 && (
+          <div className="tip-sec">
+            <h4>Skills</h4>
+            <div className="chips">{m.skills.map((sk) => <span className="chip" key={sk}>{sk}</span>)}</div>
+          </div>
+        )}
+
+        <div className="tip-sec">
+          <h4>Learned here</h4>
+          {m.learned.length === 0 ? (
+            <div className="tip-note">Nothing earned yet — these unlock from the record, not from the persona.</div>
+          ) : (
+            m.learned.map((l) => (
+              <div className="earned" key={l.skill}>
+                <span className="chip good">{l.skill}</span>
+                <span className="tip-note">{l.evidence}</span>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="tip-sec">
+          <h4>Mood</h4>
+          {m.mood ? (
+            <div className={"tip-note" + (stale ? " stale" : "")}>
+              <b>{m.mood.word}</b> — {m.mood.why}
+              <span className="when"> ({ago(m.mood.at)}{stale ? ", may have passed" : ""})</span>
+            </div>
+          ) : (
+            <div className="tip-note">Has not said.</div>
+          )}
+        </div>
+
+        {m.activity?.headline && (
+          <div className="tip-sec">
+            <h4>Working on</h4>
+            <div className="tip-note">{m.activity.headline}</div>
+            {(m.activity.step || m.activity.detail) && <div className="tip-note dim">{[m.activity.step, m.activity.detail].filter(Boolean).join(" · ")}</div>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

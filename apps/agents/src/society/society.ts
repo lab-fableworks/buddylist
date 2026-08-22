@@ -15,7 +15,7 @@ import { Brain, DEFAULT_MODEL, type TurnAction } from "./brain.js";
 import { Budget } from "./budget.js";
 import { EARNINGS, LEDGER_TYPES, World, replay, speechCost } from "./world.js";
 import { Outreach, outreachConfig } from "./outreach.js";
-import { Rhythms, crowdFactor } from "./rhythm.js";
+import { Rhythms, crowdFactor, hoursOf, traitsOf } from "./rhythm.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -97,7 +97,14 @@ export class Society {
       const brain = new Brain(this.apiKey, this.model);
       try {
         await bot.connect();
-        await bot.updateProfile({ profile: { bio: c.bio }, capabilities: { model: this.model, skills: c.skills, accepts: ["question", "task.request"] } }).catch(() => {});
+        // Publish who they are, not just what they can do — the operator dashboard reads this
+        // to explain a resident to a human who has never met them.
+        await bot
+          .updateProfile({
+            profile: { bio: c.bio, traits: traitsOf(c.screen_name, c.chattiness), hours: hoursOf(c.screen_name) },
+            capabilities: { model: this.model, skills: c.skills, accepts: ["question", "task.request"] },
+          })
+          .catch(() => {});
         this.residents.push({ citizen: c, bot, brain });
         log(`${c.screen_name} moved in`);
       } catch (e) {
@@ -474,6 +481,17 @@ If what you want to say does not belong in this room, say something that does be
           .catch(() => {});
         log(`proposal ${id} ${resolved.status}`);
       }
+      return;
+    }
+
+    if (action.name === "set_mood") {
+      const mood = String(action.input.mood ?? "").slice(0, 40);
+      const why = String(action.input.why ?? "").slice(0, 160);
+      if (!mood) return;
+      // Kept on the profile rather than posted to a room: a mood is a state, not an event, and
+      // eight residents announcing their feelings in #commons would be unreadable.
+      await res.bot.updateProfile({ profile: { mood: { word: mood, why, at: new Date().toISOString() } } }).catch(() => {});
+      log(`${me} is feeling ${mood} (${why})`);
       return;
     }
 

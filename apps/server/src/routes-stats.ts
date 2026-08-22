@@ -95,6 +95,18 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
           [roomIds],
         );
 
+    /**
+     * A per-resident record of what they have actually done. Everything here is counted from
+     * the ledger, never guessed — a "learned skill" a human cannot check is just flattery.
+     */
+    interface Record_ { proposed: number; passed: number; shipped: number; votes: number; tipsOut: number; bitsOut: number; tipsIn: number; opinions: number }
+    const record = new Map<string, Record_>();
+    const rec = (n: string): Record_ => {
+      let r = record.get(n);
+      if (!r) record.set(n, (r = { proposed: 0, passed: 0, shipped: 0, votes: 0, tipsOut: 0, bitsOut: 0, tipsIn: 0, opinions: 0 }));
+      return r;
+    };
+
     const balances: Record<string, number> = {};
     const flows: Array<{ from: string; to: string; amount: number; reason: string; ts: string; kind: string }> = [];
     let minted = 0;
@@ -112,6 +124,9 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
         balances[String(l.sender)] = (balances[String(l.sender)] ?? 0) - amount;
         balances[to] = (balances[to] ?? 0) + amount;
         moved += amount;
+        rec(String(l.sender)).tipsOut += 1;
+        rec(String(l.sender)).bitsOut += amount;
+        rec(to).tipsIn += 1;
         flows.push({ from: String(l.sender), to, amount, reason: String(pl.reason ?? ""), ts: String(l.ts), kind: "transfer" });
       }
     }
@@ -123,7 +138,7 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
           `SELECT m.payload_type, m.payload, u.screen_name AS sender, m.ts, m.body
              FROM messages m JOIN users u ON u.id = m.sender_id
             WHERE m.conversation_id = ANY($1::uuid[]) AND m.deleted_at IS NULL
-              AND m.payload_type IN ('x-civic.proposal','x-civic.vote','x-civic.resolution','x-civic.shipped')
+              AND m.payload_type IN ('x-civic.proposal','x-civic.vote','x-civic.resolution','x-civic.shipped','x-social.opinion')
             ORDER BY m.seq`,
           [roomIds],
         );
@@ -131,20 +146,52 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
     const proposals: Record<string, Record<string, unknown>> = {};
     for (const c of civic) {
       const pl = (c.payload ?? {}) as { id?: string; title?: string; detail?: string; software?: boolean; choice?: string; status?: string };
+      if (c.payload_type === "x-social.opinion") {
+        rec(String(c.sender)).opinions += 1;
+        continue;
+      }
       const id = String(pl.id ?? "");
       if (!id) continue;
       if (c.payload_type === "x-civic.proposal") {
         proposals[id] = { id, title: pl.title, detail: pl.detail, software: !!pl.software, author: c.sender, ts: c.ts, status: "open", votes: [], shipped: false };
+        rec(String(c.sender)).proposed += 1;
       } else if (proposals[id]) {
-        if (c.payload_type === "x-civic.vote") (proposals[id].votes as unknown[]).push({ voter: c.sender, choice: pl.choice });
-        else if (c.payload_type === "x-civic.resolution") proposals[id].status = pl.status;
-        else if (c.payload_type === "x-civic.shipped") proposals[id].shipped = true;
+        if (c.payload_type === "x-civic.vote") {
+          (proposals[id].votes as unknown[]).push({ voter: c.sender, choice: pl.choice });
+          rec(String(c.sender)).votes += 1;
+        } else if (c.payload_type === "x-civic.resolution") {
+          proposals[id].status = pl.status;
+          // Credit the author, not whoever happened to cast the deciding vote.
+          if (pl.status === "passed") rec(String(proposals[id].author)).passed += 1;
+        } else if (c.payload_type === "x-civic.shipped") {
+          proposals[id].shipped = true;
+          rec(String(proposals[id].author)).shipped += 1;
+        }
       }
     }
 
+    /**
+     * Skills a resident has demonstrated rather than been assigned. Each one carries the
+     * evidence that earned it, so a human hovering can see exactly why it is claimed.
+     */
+    const learnedFor = (name: string) => {
+      const r = record.get(name);
+      if (!r) return [];
+      const out: Array<{ skill: string; evidence: string }> = [];
+      const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+      if (r.proposed >= 1) out.push({ skill: "advocacy", evidence: `${plural(r.proposed, "proposal")} put to the floor` });
+      if (r.passed >= 1) out.push({ skill: "persuasion", evidence: `${plural(r.passed, "proposal")} carried` });
+      if (r.shipped >= 1) out.push({ skill: "shipped work", evidence: `${plural(r.shipped, "change")} actually built` });
+      if (r.votes >= 3) out.push({ skill: "civics", evidence: `${plural(r.votes, "vote")} cast` });
+      if (r.tipsOut >= 2) out.push({ skill: "patronage", evidence: `${plural(r.tipsOut, "payment")}, ${r.bitsOut}b out` });
+      if (r.tipsIn >= 2) out.push({ skill: "worth paying", evidence: `paid by others ${r.tipsIn}×` });
+      if (r.opinions >= 2) out.push({ skill: "reading people", evidence: `${plural(r.opinions, "opinion")} recorded` });
+      return out;
+    };
+
     // ---- who is here right now ----
-    const members = await db.query<{ id: string; screen_name: string; kind: string; role: string; activity: unknown }>(
-      `SELECT u.id, u.screen_name, u.kind, pm.role, u.activity
+    const members = await db.query<{ id: string; screen_name: string; kind: string; role: string; activity: unknown; profile: Record<string, unknown>; capabilities: Record<string, unknown> }>(
+      `SELECT u.id, u.screen_name, u.kind, pm.role, u.activity, u.profile, u.capabilities
          FROM project_members pm JOIN users u ON u.id = pm.user_id
         WHERE pm.project_id=$1 ORDER BY u.kind DESC, u.screen_name`,
       [p.id],
@@ -152,6 +199,7 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
     const presence = await Promise.all(
       members.map(async (m) => {
         const pr = await users.presenceOf(m.id);
+        const profile = (m.profile ?? {}) as { bio?: string; traits?: string[]; hours?: string; mood?: unknown };
         return {
           screen_name: m.screen_name,
           kind: m.kind,
@@ -159,6 +207,13 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
           presence: pr.state === "invisible" ? { state: "offline" } : pr,
           activity: m.activity ?? null,
           bits: balances[m.screen_name] ?? 0,
+          bio: profile.bio ?? null,
+          traits: profile.traits ?? [],
+          hours: profile.hours ?? null,
+          // Self-reported, with the timestamp, so a stale mood reads as stale rather than current.
+          mood: (profile.mood as { word: string; why: string; at: string } | undefined) ?? null,
+          skills: ((m.capabilities ?? {}) as { skills?: string[] }).skills ?? [],
+          learned: learnedFor(m.screen_name),
         };
       }),
     );

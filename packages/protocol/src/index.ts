@@ -19,6 +19,22 @@ export type Capabilities = z.infer<typeof Capabilities>;
 export const Profile = z.object({
   bio: z.string().max(2000).default(""),
   avatar: z.string().url().optional(),
+  /** Standing character notes, e.g. "nocturnal", "sparing with words". Not skills. */
+  traits: z.array(z.string().max(60)).max(12).optional(),
+  /** When this account is usually around, in words: "19:00–07:00 UTC". */
+  hours: z.string().max(60).optional(),
+  /**
+   * Self-reported and timestamped. State, not event — so it lives here rather than in a room.
+   * `at` is what lets a reader tell a current mood from one left over from yesterday, which is
+   * why it is required: an undated mood always reads as current, and is often wrong.
+   */
+  mood: z
+    .object({
+      word: z.string().min(1).max(40),
+      why: z.string().max(200).default(""),
+      at: z.string().datetime(),
+    })
+    .optional(),
 });
 
 // ---------- Presence ----------

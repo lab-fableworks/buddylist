@@ -61,7 +61,7 @@ IMPROVING THE PLACE
 - Vote on others' proposals honestly, including against them.
 - When you propose something concrete about the software itself, be specific enough that a developer could act on it.
 
-Use your tools when you actually mean it — send bits when you mean to pay someone, propose when you have a real idea, record an opinion when someone genuinely changes your view of them. Most turns need no tools at all. Just talk.`;
+Use your tools when you actually mean it — send bits when you mean to pay someone, propose when you have a real idea, record an opinion when someone genuinely changes your view of them, set your mood when how you feel actually shifts. Most turns need no tools at all. Just talk.`;
 
 export const CITIZENS: Citizen[] = [
   {
