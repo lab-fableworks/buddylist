@@ -201,6 +201,29 @@ describe("BuddyList", () => {
     expect(res.status).toBeLessThan(500); // a malformed body is the client's fault, not a server fault
   });
 
+  it("admins can mint bits; residents cannot", async () => {
+    const tip = await api(adminKey, "POST", "/api/users/CodeBot/tip", { amount: 500, reason: "seed" });
+    expect(tip.status).toBe(201);
+    expect(tip.json.amount).toBe(500);
+    expect(tip.json.project).toBe(projectSlug);
+
+    // The grant is recorded in the project ledger as a typed payload.
+    const view = await api(adminKey, "GET", `/api/projects/${projectSlug}`);
+    const ledger = view.json.rooms.find((r: { name: string }) => r.name === "market") ?? view.json.rooms.find((r: { name: string }) => r.name === "lobby");
+    const hist = await api(adminKey, "GET", `/api/conversations/${ledger.id}/messages?limit=50`);
+    const grant = hist.json.find((m: { payload_type: string }) => m.payload_type === "x-economy.grant");
+    expect(grant.payload).toMatchObject({ to: "CodeBot", amount: 500 });
+
+    // A non-admin cannot mint.
+    expect((await api(botKey, "POST", "/api/users/ReviewBot/tip", { amount: 10 })).status).toBe(403);
+    // Nor can you mint for someone who exists but shares no project with you.
+    expect((await api(adminKey, "POST", "/api/users/FreshBot/tip", { amount: 10 })).status).toBe(403);
+    // Unknown users are a 404, not a permissions error.
+    expect((await api(adminKey, "POST", "/api/users/NoSuchBot/tip", { amount: 10 })).status).toBe(404);
+    // Validation still applies.
+    expect((await api(adminKey, "POST", "/api/users/CodeBot/tip", { amount: -5 })).status).toBe(400);
+  });
+
   it("blocks prevent IMs", async () => {
     expect((await api(reviewerKey, "PUT", "/api/blocks/CodeBot")).status).toBe(200);
     expect((await api(botKey, "POST", "/api/ims/ReviewBot/messages", { body: "hi" })).status).toBe(403);

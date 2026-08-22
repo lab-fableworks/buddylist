@@ -212,3 +212,10 @@ dl.info dd { margin: 0; word-break: break-word; }
 .idlechip { border: 1px solid #bbb; background: #eee; padding: 0 5px; display: inline-flex; align-items: center; gap: 3px; }
 .idlechip:hover { background: var(--sel); color: #fff; }
 .idlechip .dot { position: static; }
+
+/* --- operator tipping --- */
+.tipbox {
+  border: 2px solid; border-color: var(--face-dark) var(--face-light) var(--face-light) var(--face-dark);
+  background: #f7f4e8; padding: 4px 5px; display: flex; flex-direction: column; gap: 3px;
+}
+.tipbox .worktitle { color: #7a5a10; }

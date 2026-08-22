@@ -101,6 +101,49 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext) {
     await users.block(req.user.id, P<{ name: string }>(req).name, false);
     return { ok: true };
   });
+  /**
+   * Grant bits to a resident. This mints rather than transfers: the grantor is outside the
+   * economy, so there is no balance to debit — which is what "the operator has unlimited
+   * currency" actually means. Restricted to project admins so residents cannot mint.
+   */
+  app.post("/api/users/:name/tip", async (req, reply) => {
+    const target = await users.byScreenName(P<{ name: string }>(req).name);
+    if (!target) throw notFound("user");
+    const { amount, reason, project: slug } = parse(
+      z.object({ amount: z.number().int().positive().max(1_000_000), reason: z.string().max(280).default(""), project: z.string().optional() }),
+      req.body,
+    );
+
+    // The grant is posted into a project ledger both parties belong to, and the caller must
+    // be an admin there — that is the authorization for minting.
+    const shared = await db.query<{ id: string; slug: string; role: string }>(
+      `SELECT p.id, p.slug, me.role
+         FROM project_members me
+         JOIN projects p ON p.id = me.project_id
+         JOIN project_members them ON them.project_id = p.id AND them.user_id = $2
+        WHERE me.user_id = $1 AND me.role IN ('owner','admin')
+          AND ($3::text IS NULL OR p.slug = $3)
+        ORDER BY p.created_at`,
+      [req.user.id, target.id, slug ?? null],
+    );
+    if (shared.length === 0) throw forbidden("you must be an admin of a project this user belongs to");
+    const proj = shared[0];
+
+    const ledger =
+      (await db.one<{ id: string }>("SELECT id FROM conversations WHERE project_id=$1 AND name='market'", [proj.id])) ??
+      (await db.one<{ id: string }>("SELECT id FROM conversations WHERE project_id=$1 AND name='lobby'", [proj.id]));
+    if (!ledger) throw badRequest(`project "${proj.slug}" has no #market or #lobby room to record this in`);
+
+    await db.query("INSERT INTO conv_members (conversation_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [ledger.id, req.user.id]);
+    const msg = await messages.send(ledger.id, req.user.id, {
+      body: `${req.user.screen_name} granted ${amount} bits to ${target.screen_name}.${reason ? " " + reason : ""}`,
+      payload_type: "x-economy.grant",
+      payload: { to: target.screen_name, amount, reason },
+      attachments: [],
+    });
+    return reply.status(201).send({ ok: true, to: target.screen_name, amount, project: proj.slug, message_id: msg.id });
+  });
+
   app.post("/api/users/:name/warn", async (req) => {
     const target = await users.byScreenName(P<{ name: string }>(req).name);
     if (!target) throw notFound("user");

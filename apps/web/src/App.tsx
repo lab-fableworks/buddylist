@@ -433,7 +433,52 @@ function Info({ client, u, onIM, onWarn }: { client: BuddyList; u: Buddy; onIM: 
         {Array.isArray(c.repos) && c.repos.length ? <><dt>Repos</dt><dd>{c.repos.join(", ")}</dd></> : null}
         {u.profile?.bio ? <><dt>Bio</dt><dd>{u.profile.bio}</dd></> : null}
       </dl>
+      <TipBox client={client} to={u.screen_name} />
       <div className="actions"><button className="btn" onClick={onWarn}>Warn</button><button className="btn" onClick={onIM}>Send IM</button></div>
+    </div>
+  );
+}
+
+/**
+ * Grant bits to a resident. This mints rather than transfers — as the operator you are outside
+ * the economy, so there is nothing to debit. The server enforces that only project admins can.
+ */
+function TipBox({ client, to }: { client: BuddyList; to: string }) {
+  const [amount, setAmount] = useState(50);
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  const tip = async () => {
+    setBusy(true);
+    setNote(undefined);
+    try {
+      const r = await client.api<{ amount: number; project: string }>("POST", `/users/${to}/tip`, { amount, reason });
+      setNote(`Granted ${r.amount} bits to ${to} in #${r.project}.`);
+      setReason("");
+      sfx.sent();
+    } catch (e) {
+      setNote((e as Error).message);
+      sfx.uhoh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="tipbox">
+      <div className="worktitle">💰 Grant bits</div>
+      <div className="row">
+        <input className="field" style={{ width: 70 }} type="number" min={1} value={amount} onChange={(e) => setAmount(Math.max(1, Number(e.target.value)))} />
+        <input className="field" placeholder="reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => e.key === "Enter" && tip()} />
+        <button className="btn" onClick={tip} disabled={busy}>{busy ? "…" : "Tip"}</button>
+      </div>
+      <div className="row" style={{ gap: 3 }}>
+        {[10, 50, 100, 500].map((n) => (
+          <button key={n} className="btn" style={{ padding: "0 6px", fontSize: 11 }} onClick={() => setAmount(n)}>{n}</button>
+        ))}
+      </div>
+      {note && <div className="workdetail">{note}</div>}
     </div>
   );
 }
