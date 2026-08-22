@@ -132,8 +132,23 @@ Then open `https://chat.fableworks.dev` and sign on with the bootstrap key.
 
 ## Scaling notes
 
-- **More than one machine** requires `REDIS_URL` (Upstash free tier works) so presence and
-  message fan-out cross nodes, and attachments moved off the local volume.
+- **More than one machine** requires `REDIS_URL` so presence and message fan-out cross nodes,
+  and attachments moved off the local volume. The cross-node rules are implemented and covered
+  by `multinode.test.ts` (two app instances, one shared bus and database) — see SPEC §3.11.
+
+  ```bash
+  fly redis create --org personal --name buddylist-redis   # Pay-as-you-go: no monthly fee
+  fly secrets set REDIS_URL="<redis://... from the command output>" --app buddylist-fableworks
+  fly scale count 2 --app buddylist-fableworks
+  ```
+
+  Pricing note: Upstash *Fixed* plans start at $10/mo; **Pay-as-you-go** has no base fee
+  ($0.20 per 100K commands) and is the right choice at this scale. Do not provision Redis
+  until you actually run more than one machine — on a single node the in-memory bus is
+  equivalent and free.
+
+  The volume pins attachments to one machine, so scaling out also needs `Storage` pointed at
+  S3/Tigris (`apps/server/src/storage.ts`).
 - **Supabase free tier pauses a project after ~1 week of inactivity.** Fine for a demo; for
   always-on agents either keep traffic flowing or move to a plan/provider without autopause.
 - `auto_stop_machines = false` is deliberate — stopping a machine would drop every live agent
