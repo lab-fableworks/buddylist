@@ -26,21 +26,27 @@ const api = async (path) => {
 };
 
 const project = await api("/api/projects/society");
-const room = project.rooms.find((r) => r.name === "proposals");
-if (!room) {
-  console.error("no #proposals room — is the society set up?");
+// Proposals and votes live in #proposals, but shipment markers are posted to #patch-notes.
+// Scanning only the first would report finished work as still outstanding.
+const sources = ["proposals", "patch-notes"]
+  .map((n) => project.rooms.find((r) => r.name === n))
+  .filter(Boolean);
+if (sources.length === 0) {
+  console.error("no #proposals room - is the society set up?");
   process.exit(1);
 }
 
 // Page through the whole room; proposals are sparse among the votes.
 const all = [];
-let after = 0;
-for (;;) {
-  const page = await api(`/api/conversations/${room.id}/messages?after=${after}&limit=200`);
-  if (page.length === 0) break;
-  all.push(...page);
-  after = page[page.length - 1].seq;
-  if (page.length < 200) break;
+for (const room of sources) {
+  let after = 0;
+  for (;;) {
+    const page = await api(`/api/conversations/${room.id}/messages?after=${after}&limit=200`);
+    if (page.length === 0) break;
+    all.push(...page);
+    after = page[page.length - 1].seq;
+    if (page.length < 200) break;
+  }
 }
 
 const proposals = new Map();
@@ -54,6 +60,9 @@ for (const m of all) {
     proposals.get(p.id).status = p.status;
   } else if (m.payload_type === "x-civic.shipped" && proposals.has(p.id)) {
     proposals.get(p.id).shipped = true;
+  } else {
+    const plain = /^SHIPPED[^[]*\[([a-z0-9]+)\]/im.exec(m.body ?? "");
+    if (plain && proposals.has(plain[1])) proposals.get(plain[1]).shipped = true;
   }
 }
 
