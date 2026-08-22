@@ -15,6 +15,7 @@ import { Brain, DEFAULT_MODEL, type TurnAction } from "./brain.js";
 import { Budget } from "./budget.js";
 import { EARNINGS, LEDGER_TYPES, World, replay, speechCost } from "./world.js";
 import { Outreach, outreachConfig } from "./outreach.js";
+import { Rhythms, crowdFactor } from "./rhythm.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -42,6 +43,9 @@ export class Society {
   /** Observed bits-per-message, so the affordability gate tracks reality. */
   private recentRates: number[] = [];
   private outreach = new Outreach(outreachConfig());
+  private rhythms = new Rhythms();
+  /** Last observed presence of the human, refreshed on a timer. */
+  private humanState: string | undefined;
   /** Humans in the project — the people residents may reach out to. */
   private humans: string[] = [];
 
@@ -77,6 +81,8 @@ export class Society {
       going_rate_bits: this.goingRate(),
       outreach: this.outreach.status,
       humans: this.humans,
+      human_state: this.humanState ?? "unknown",
+      rhythms: this.rhythms.status(this.residents.map((r) => r.citizen.screen_name)),
       model: this.model,
     };
   }
@@ -134,6 +140,20 @@ export class Society {
     }
 
     this.listen();
+    const pollHuman = async () => {
+      if (this.humans.length === 0) return;
+      try {
+        const u = await this.residents[0].bot.api<{ presence: { state: string } }>("GET", `/users/${this.humans[0]}`);
+        const next = u.presence.state;
+        if (next !== this.humanState) log(`${this.humans[0]} is now ${next}`);
+        this.humanState = next;
+      } catch {
+        /* transient */
+      }
+    };
+    void pollHuman();
+    setInterval(() => void pollHuman(), 60_000);
+
     this.running = true;
     void this.director();
   }
@@ -178,7 +198,12 @@ export class Society {
         const conv = inbox.find((c) => c.id === m.conversation_id);
         if (conv?.kind !== "im") return;
         this.remember(m);
-        await this.takeTurn(r, m.conversation_id, `${m.sender} just messaged you directly. Reply to them.`).catch(() => {});
+        const wasAway = !this.rhythms.presenceOf(r.citizen.screen_name).awake;
+        this.rhythms.wake(r.citizen.screen_name);
+        const nudge = wasAway
+          ? `${m.sender} just messaged you directly while you were away. Reply to them — you can mention you had stepped out if it is natural, but do not make a production of it.`
+          : `${m.sender} just messaged you directly. Reply to them.`;
+        await this.takeTurn(r, m.conversation_id, nudge).catch(() => {});
       });
     }
   }
@@ -195,7 +220,9 @@ export class Society {
 
   private async director() {
     while (this.running) {
-      const waitS = this.budget.paceSeconds(Number(process.env.SOCIETY_MIN_INTERVAL_S ?? 25));
+      // Nobody watching means less reason to fill the room — more believable, and cheaper.
+      const crowd = crowdFactor(this.humanState);
+      const waitS = this.budget.paceSeconds(Number(process.env.SOCIETY_MIN_INTERVAL_S ?? 25)) * crowd.multiplier;
       await sleep(waitS * 1000 * (0.7 + Math.random() * 0.6));
       if (!this.running) break;
 
@@ -276,8 +303,14 @@ export class Society {
     // Speech is not free. A citizen who cannot cover the going rate simply does not get a
     // turn — that is the whole point of the currency, so the silence has to be real.
     const going = this.goingRate();
-    const solvent = this.residents.filter((r) => this.world.canAfford(r.citizen.screen_name, going));
+    const solvent = this.residents.filter(
+      (r) => this.world.canAfford(r.citizen.screen_name, going) && this.rhythms.presenceOf(r.citizen.screen_name).awake,
+    );
     if (solvent.length === 0) {
+      if (this.residents.every((r) => !this.rhythms.presenceOf(r.citizen.screen_name).awake)) {
+        log("everyone is asleep or away");
+        return;
+      }
       log(`everyone is broke (rate ${going} bits) — paying the stipend`);
       this.world.payStipend(this.residents.map((r) => r.citizen.screen_name));
       return;
@@ -304,10 +337,21 @@ export class Society {
   private async takeTurn(res: Resident, conversationId: string, nudge: string, roomName?: string) {
     const me = res.citizen.screen_name;
     const others = this.residents.map((r) => r.citizen.screen_name).filter((n) => n !== me);
+    const away = others.filter((n) => !this.rhythms.presenceOf(n).awake);
+    const here = others.filter((n) => this.rhythms.presenceOf(n).awake);
+    const crowd = crowdFactor(this.humanState);
+    const whoIsAround = [
+      here.length ? `Around right now: ${here.join(", ")}.` : "Nobody else is around right now.",
+      away.length ? `Away or asleep: ${away.map((n) => `${n} (${this.rhythms.presenceOf(n).reason})`).join(", ")}. Do not expect them to answer.` : "",
+      crowd.note,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
     const situation = roomName
-      ? `You are in #${roomName} — ${ROOM_PURPOSE[roomName] ?? ""} Also here: ${others.join(", ")}.
+      ? `You are in #${roomName} — ${ROOM_PURPOSE[roomName] ?? ""} ${whoIsAround}
 If what you want to say does not belong in this room, say something that does belong here instead.`
-      : `You are in a direct message. The other residents are elsewhere: ${others.join(", ")}.`;
+      : `You are in a direct message. ${whoIsAround}`;
 
     const result = await res.brain.think({
       charter: res.citizen.charter,
@@ -355,6 +399,14 @@ If what you want to say does not belong in this room, say something that does be
     }
 
     for (const a of result.actions) await this.enact(res, a).catch((e) => log(`${me} action ${a.name} failed:`, (e as Error).message));
+
+    // Breaks start mid-flow, the way they do for people.
+    const broke = this.rhythms.maybeStartBreak(me);
+    if (broke) {
+      log(`${me} stepped away (${broke})`);
+      void res.bot.setPresence("away", broke).catch(() => {});
+      void res.bot.setActivity({ headline: `Away — ${broke}`, project: this.project, detail: `${this.world.balance(me)} bits` }).catch(() => {});
+    }
   }
 
   // ------------------------------------------------------------------ actions
