@@ -1,0 +1,173 @@
+/* BuddyList — late-90s IM look. Original artwork/colors; no AOL/ICQ marks. */
+:root {
+  --desk: #3a6ea5;
+  --face: #d4d0c8;
+  --face-dark: #808080;
+  --face-light: #ffffff;
+  --face-shadow: #404040;
+  --title-a: #0a246a;
+  --title-b: #a6caf0;
+  --title-inactive-a: #808080;
+  --title-inactive-b: #c0c0c0;
+  --text: #000;
+  --link: #0000ff;
+  --me: #0000c0;
+  --them: #c00000;
+  --sys: #606060;
+  --sel: #0a246a;
+  --font: "Tahoma", "MS Sans Serif", "Segoe UI", Arial, sans-serif;
+  --mono: "Lucida Console", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--desk);
+  background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,.06) 1px, transparent 0);
+  background-size: 6px 6px;
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+}
+button, input, textarea, select { font: inherit; }
+
+/* --- 3D chrome --- */
+.win {
+  position: absolute;
+  background: var(--face);
+  border: 1px solid;
+  border-color: var(--face-light) var(--face-shadow) var(--face-shadow) var(--face-light);
+  box-shadow: 1px 1px 0 var(--face-dark) inset, -1px -1px 0 var(--face) inset, 2px 2px 6px rgba(0,0,0,.35);
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  min-height: 120px;
+}
+.win.active { z-index: 10; }
+.titlebar {
+  height: 18px;
+  padding: 0 2px 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #fff;
+  font-weight: bold;
+  background: linear-gradient(90deg, var(--title-inactive-a), var(--title-inactive-b));
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.win.active .titlebar { background: linear-gradient(90deg, var(--title-a), var(--title-b)); }
+.titlebar .title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.titlebar .ico { width: 14px; text-align: center; }
+.tbtn {
+  width: 16px; height: 14px; padding: 0; line-height: 11px; font-size: 10px; font-weight: bold;
+  background: var(--face); color: #000; border: 1px solid;
+  border-color: var(--face-light) var(--face-shadow) var(--face-shadow) var(--face-light);
+}
+.tbtn:active { border-color: var(--face-shadow) var(--face-light) var(--face-light) var(--face-shadow); }
+.body { flex: 1; display: flex; flex-direction: column; padding: 4px; gap: 4px; min-height: 0; }
+.sunken {
+  background: #fff;
+  border: 2px solid;
+  border-color: var(--face-dark) var(--face-light) var(--face-light) var(--face-dark);
+  overflow: auto;
+  user-select: text;
+}
+.btn {
+  padding: 2px 10px; background: var(--face); border: 1px solid;
+  border-color: var(--face-light) var(--face-shadow) var(--face-shadow) var(--face-light);
+  box-shadow: 1px 1px 0 var(--face-dark) inset;
+  cursor: default;
+}
+.btn:active, .btn.down { border-color: var(--face-shadow) var(--face-light) var(--face-light) var(--face-shadow); box-shadow: none; }
+.btn:disabled { color: var(--face-dark); text-shadow: 1px 1px 0 #fff; }
+input.field, textarea.field, select.field {
+  background: #fff; border: 2px solid;
+  border-color: var(--face-dark) var(--face-light) var(--face-light) var(--face-dark);
+  padding: 2px 3px; outline: none; width: 100%;
+}
+.row { display: flex; gap: 4px; align-items: center; }
+.menubar { display: flex; gap: 2px; padding: 1px 2px; border-bottom: 1px solid var(--face-dark); }
+.menubar span { padding: 1px 6px; }
+.menubar span:hover { background: var(--sel); color: #fff; }
+.statusbar { border-top: 1px solid var(--face-light); padding: 2px 4px; color: #333; font-size: 11px; display: flex; gap: 8px; }
+.statusbar .cell { border: 1px solid; border-color: var(--face-dark) var(--face-light) var(--face-light) var(--face-dark); padding: 0 4px; flex: 1; }
+
+/* --- sign on --- */
+.signon { width: 300px; left: calc(50% - 150px); top: 120px; }
+.signon .logo {
+  text-align: center; padding: 10px 0 4px; font-size: 26px; font-weight: bold; letter-spacing: 1px;
+  color: #1b3e8a; text-shadow: 2px 2px 0 #ffd54a;
+}
+.signon .runner { font-size: 44px; line-height: 1; text-align: center; }
+.signon label { display: block; margin: 6px 0 2px; }
+.signon .error { color: #c00; margin-top: 4px; }
+
+/* --- buddy list --- */
+.buddylist { width: 230px; height: 520px; left: 20px; top: 20px; }
+.tree { flex: 1; padding: 2px; }
+.group { font-weight: bold; padding: 2px 2px; cursor: default; }
+.group .count { font-weight: normal; color: #444; }
+.buddy { padding: 1px 2px 1px 18px; display: flex; align-items: center; gap: 4px; position: relative; }
+.buddy:hover, .buddy.sel { background: var(--sel); color: #fff; }
+.buddy .dot { position: absolute; left: 6px; width: 8px; height: 8px; border-radius: 50%; border: 1px solid #333; }
+.dot.online { background: #2ecc40; }
+.dot.away, .dot.idle { background: #ffdc00; }
+.dot.busy { background: #ff4136; }
+.dot.offline { background: #bbb; }
+.buddy.away .name, .buddy.idle .name { font-style: italic; color: #555; }
+.buddy.sel.away .name { color: #ddd; }
+.buddy.offline { color: #888; }
+.buddy .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { font-size: 9px; padding: 0 3px; border: 1px solid #888; background: #eee; color: #333; border-radius: 2px; }
+.buddy.sel .badge { background: #fff; }
+.tabs { display: flex; gap: 0; }
+.tab { padding: 2px 8px; border: 1px solid var(--face-dark); border-bottom: none; background: #c8c4bc; }
+.tab.on { background: var(--face); position: relative; top: 1px; }
+
+/* --- conversation --- */
+.convo { width: 460px; height: 380px; }
+.log { flex: 1; padding: 4px; font-size: 12px; line-height: 1.35; }
+.msg { margin-bottom: 2px; word-wrap: break-word; }
+.msg .who { font-weight: bold; }
+.msg.me .who { color: var(--me); }
+.msg.them .who { color: var(--them); }
+.msg .time { color: #888; font-size: 10px; margin-right: 4px; }
+.msg.sys { color: var(--sys); font-style: italic; }
+.msg.deleted { color: #999; font-style: italic; }
+.msg .edited { color: #999; font-size: 10px; }
+.card {
+  margin: 3px 0 3px 12px; padding: 4px 6px; background: #f4f4e8; border: 1px solid #b9b99a;
+  font-family: var(--mono); font-size: 11px; white-space: pre-wrap; max-width: 100%;
+}
+.card .ctitle { font-family: var(--font); font-weight: bold; margin-bottom: 2px; display: flex; gap: 6px; align-items: center; }
+.card .ctitle .btn { padding: 0 6px; font-size: 11px; }
+.composer { height: 64px; resize: none; }
+.convo .members { width: 120px; }
+.convo .split { display: flex; gap: 4px; flex: 1; min-height: 0; }
+.convo .split .log { flex: 1; }
+.typing { font-size: 10px; color: #555; height: 12px; }
+.toolbar { display: flex; gap: 2px; align-items: center; }
+.toolbar .btn { padding: 1px 5px; font-size: 11px; }
+
+/* --- taskbar --- */
+.taskbar {
+  position: fixed; left: 0; right: 0; bottom: 0; height: 28px; background: var(--face);
+  border-top: 1px solid var(--face-light); display: flex; align-items: center; gap: 3px; padding: 2px; z-index: 1000;
+}
+.taskbar .start { font-weight: bold; padding: 2px 8px; }
+.taskbar .task { min-width: 120px; max-width: 180px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.taskbar .clock { margin-left: auto; }
+.taskbar .cell { border: 1px solid; border-color: var(--face-dark) var(--face-light) var(--face-light) var(--face-dark); padding: 2px 8px; }
+
+/* --- dialogs --- */
+.dialog { width: 340px; left: calc(50% - 170px); top: 160px; }
+.dialog .body { gap: 6px; }
+.dialog .actions { display: flex; justify-content: flex-end; gap: 4px; }
+dl.info { display: grid; grid-template-columns: 90px 1fr; gap: 2px 6px; margin: 0; }
+dl.info dt { color: #444; }
+dl.info dd { margin: 0; word-break: break-word; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

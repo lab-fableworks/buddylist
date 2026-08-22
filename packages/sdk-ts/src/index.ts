@@ -1,0 +1,230 @@
+/**
+ * @buddylist/sdk — thin client for agents (Node) and browsers.
+ *
+ *   const bot = new BuddyList({ url: "http://localhost:4000", apiKey });
+ *   bot.on("task.request", async (msg) => { ... await bot.reply(msg, { payload_type: "task.result", payload: {...} }) });
+ *   await bot.connect();
+ */
+import type { Message, Presence, PresenceState, SendMessage, ServerFrame } from "@buddylist/protocol";
+export type { Message, Presence, ServerFrame } from "@buddylist/protocol";
+
+export interface BuddyListOptions {
+  url: string;
+  apiKey: string;
+  /** Provide in Node < 22 or when you want the `ws` package. Browsers use the global. */
+  WebSocketImpl?: typeof WebSocket;
+  reconnect?: boolean;
+  log?: (msg: string) => void;
+}
+
+type FrameType = ServerFrame["type"];
+type Handler<T extends FrameType> = (frame: Extract<ServerFrame, { type: T }>) => void | Promise<void>;
+type MessageHandler = (msg: Message, frame: Extract<ServerFrame, { type: "message" }>) => void | Promise<void>;
+
+export class BuddyListError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export class BuddyList {
+  private ws?: WebSocket;
+  private frameHandlers = new Map<string, Set<(f: ServerFrame) => unknown>>();
+  private payloadHandlers = new Map<string, Set<MessageHandler>>();
+  private lastSeq = new Map<string, number>();
+  private pending = new Map<string, { resolve: (m: Message) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private closed = false;
+  private backoff = 1000;
+  me?: { screen_name: string; uin: number };
+
+  constructor(private opts: BuddyListOptions) {}
+
+  // ---------- REST ----------
+  async api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+    const res = await fetch(this.opts.url.replace(/\/$/, "") + "/api" + path, {
+      method,
+      headers: { authorization: `Bearer ${this.opts.apiKey}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const json = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+    if (!res.ok) throw new BuddyListError(res.status, json.error ?? "error", json.message ?? res.statusText);
+    return json as T;
+  }
+
+  whoami() {
+    return this.api<{ screen_name: string; uin: number; capabilities: Record<string, unknown> }>("GET", "/me");
+  }
+  setPresence(state: PresenceState, message?: string, expected_back?: string) {
+    if (this.ws?.readyState === 1) {
+      this.ws.send(JSON.stringify({ type: "presence.set", data: { state, message, expected_back } }));
+      return Promise.resolve();
+    }
+    return this.api("PUT", "/me/presence", { state, message, expected_back });
+  }
+  updateProfile(patch: { profile?: Record<string, unknown>; capabilities?: Record<string, unknown> }) {
+    return this.api("PATCH", "/me/profile", patch);
+  }
+  buddies() {
+    return this.api<Array<{ name: string; buddies: Array<{ screen_name: string; kind: string; presence: Presence; capabilities: Record<string, unknown> }> }>>("GET", "/buddies");
+  }
+  addBuddy(screenName: string, group = "Buddies") {
+    return this.api("PUT", `/buddies/${screenName}`, { group });
+  }
+  directory(q: { skill?: string; repo?: string; accepts?: string } = {}) {
+    const qs = new URLSearchParams(Object.entries(q).filter(([, v]) => v) as [string, string][]).toString();
+    return this.api<Array<{ screen_name: string; presence: Presence; capabilities: Record<string, unknown> }>>("GET", `/directory${qs ? "?" + qs : ""}`);
+  }
+  projects() {
+    return this.api<Array<{ slug: string; name: string; role: string }>>("GET", "/projects");
+  }
+  project(slug: string) {
+    return this.api<{ id: string; slug: string; name: string; role: string; members: Array<{ screen_name: string; role: string }>; rooms: Array<{ id: string; name: string; topic: string }> }>("GET", `/projects/${slug}`);
+  }
+  joinRoom(roomId: string) {
+    return this.api("POST", `/rooms/${roomId}/join`);
+  }
+  /** Find a room by project slug + room name (e.g. "atlas", "lobby") and join it. */
+  async room(slug: string, name = "lobby") {
+    const p = await this.project(slug);
+    const r = p.rooms.find((x) => x.name === name);
+    if (!r) throw new BuddyListError(404, "not_found", `room ${slug}/${name} not found`);
+    await this.joinRoom(r.id).catch(() => {});
+    return r;
+  }
+  inbox() {
+    return this.api<Array<{ id: string; kind: "im" | "room"; name: string | null; peer: string | null; last_seq: number; last_read_seq: number }>>("GET", "/inbox");
+  }
+  history(conversationId: string, opts: { after?: number; before?: number; limit?: number } = {}) {
+    const qs = new URLSearchParams(Object.entries(opts).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])).toString();
+    return this.api<Message[]>("GET", `/conversations/${conversationId}/messages${qs ? "?" + qs : ""}`);
+  }
+  search(q: string, opts: { project?: string; type?: string } = {}) {
+    const qs = new URLSearchParams({ q, ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v)) }).toString();
+    return this.api<Message[]>("GET", `/search?${qs}`);
+  }
+
+  im(screenName: string, input: string | Partial<SendMessage>) {
+    return this.api<Message>("POST", `/ims/${screenName}/messages`, typeof input === "string" ? { body: input } : input);
+  }
+  send(roomId: string, input: string | Partial<SendMessage>) {
+    return this.api<Message>("POST", `/rooms/${roomId}/messages`, typeof input === "string" ? { body: input } : input);
+  }
+  /** Reply in the same conversation as `msg`, threaded. */
+  async reply(msg: Message, input: string | Partial<SendMessage>) {
+    const body = typeof input === "string" ? { body: input } : input;
+    const inbox = await this.inbox();
+    const conv = inbox.find((c) => c.id === msg.conversation_id);
+    if (!conv) throw new BuddyListError(404, "not_found", "conversation not in inbox");
+    const payload = { ...body, reply_to: msg.id };
+    return conv.kind === "im" ? this.im(conv.peer!, payload) : this.send(conv.id, payload);
+  }
+  markRead(conversationId: string, seq: number) {
+    if (this.ws?.readyState === 1) this.ws.send(JSON.stringify({ type: "ack", conversation_id: conversationId, seq }));
+    else void this.api("PUT", `/conversations/${conversationId}/read`, { seq });
+  }
+  typing(conversationId: string) {
+    this.ws?.send(JSON.stringify({ type: "typing", conversation_id: conversationId }));
+  }
+
+  /**
+   * Send a task/question to a peer and await the correlated reply.
+   * Correlation key: payload.task_id or payload.question_id. Resolves on the first message whose payload has the same key.
+   */
+  request(screenName: string, input: Partial<SendMessage> & { payload: Record<string, unknown> }, timeoutMs = 5 * 60_000): Promise<Message> {
+    const key = (input.payload.task_id ?? input.payload.question_id) as string | undefined;
+    if (!key) throw new Error("request() needs payload.task_id or payload.question_id for correlation");
+    return new Promise<Message>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(key);
+        reject(new Error(`request ${key} timed out`));
+      }, timeoutMs);
+      this.pending.set(key, { resolve, reject, timer });
+      this.im(screenName, input).catch((e) => {
+        clearTimeout(timer);
+        this.pending.delete(key);
+        reject(e);
+      });
+    });
+  }
+
+  // ---------- events ----------
+  /** Subscribe to raw server frames by type ("message", "presence", "mention", ...). */
+  on<T extends FrameType>(type: T, h: Handler<T>): () => void;
+  /** Subscribe to messages by payload_type ("task.request", "review.request", "text", ...). */
+  on(payloadType: string, h: MessageHandler): () => void;
+  on(type: string, h: (...a: never[]) => unknown): () => void {
+    const isFrame = FRAME_TYPES.has(type);
+    const map = (isFrame ? this.frameHandlers : this.payloadHandlers) as Map<string, Set<unknown>>;
+    if (!map.has(type)) map.set(type, new Set());
+    map.get(type)!.add(h);
+    return () => void map.get(type)!.delete(h);
+  }
+
+  private async dispatch(frame: ServerFrame) {
+    for (const h of this.frameHandlers.get(frame.type) ?? []) await h(frame);
+    if (frame.type === "message") {
+      const m = frame.data;
+      this.lastSeq.set(m.conversation_id, Math.max(this.lastSeq.get(m.conversation_id) ?? 0, m.seq));
+      if (m.sender === this.me?.screen_name) return;
+      const p = m.payload as Record<string, unknown> | null;
+      const key = (p?.task_id ?? p?.question_id) as string | undefined;
+      const pend = key ? this.pending.get(key) : undefined;
+      // Don't resolve on the original request itself, only on replies.
+      if (pend && !/\.request$|^question$/.test(m.payload_type)) {
+        clearTimeout(pend.timer);
+        this.pending.delete(key!);
+        pend.resolve(m);
+      }
+      for (const h of this.payloadHandlers.get(m.payload_type) ?? []) await h(m, frame);
+      for (const h of this.payloadHandlers.get("*") ?? []) await h(m, frame);
+    }
+  }
+
+  // ---------- socket ----------
+  async connect(): Promise<void> {
+    this.closed = false;
+    this.me = await this.whoami();
+    for (const c of await this.inbox()) this.lastSeq.set(c.id, c.last_seq);
+    return this.open();
+  }
+
+  private open(): Promise<void> {
+    const WS = this.opts.WebSocketImpl ?? (globalThis as { WebSocket?: typeof WebSocket }).WebSocket;
+    if (!WS) throw new Error("No WebSocket implementation; pass WebSocketImpl (e.g. from 'ws')");
+    const url = this.opts.url.replace(/^http/, "ws").replace(/\/$/, "") + `/ws?key=${encodeURIComponent(this.opts.apiKey)}`;
+    return new Promise((resolve, reject) => {
+      const ws = new WS(url);
+      this.ws = ws;
+      let opened = false;
+      ws.onopen = () => {
+        opened = true;
+        this.backoff = 1000;
+        ws.send(JSON.stringify({ type: "hello", last_seq: Object.fromEntries(this.lastSeq) }));
+        resolve();
+      };
+      ws.onmessage = (ev) => void this.dispatch(JSON.parse(String(ev.data)) as ServerFrame);
+      ws.onerror = () => {
+        if (!opened) reject(new Error("websocket connect failed"));
+      };
+      ws.onclose = () => {
+        if (this.closed || this.opts.reconnect === false) return;
+        this.opts.log?.(`disconnected; reconnecting in ${this.backoff}ms`);
+        setTimeout(() => void this.open().catch(() => {}), this.backoff);
+        this.backoff = Math.min(this.backoff * 2, 30_000);
+      };
+      // keepalive
+      const ping = setInterval(() => (ws.readyState === 1 ? ws.send(JSON.stringify({ type: "ping" })) : clearInterval(ping)), 25_000);
+    });
+  }
+
+  close() {
+    this.closed = true;
+    this.ws?.close();
+  }
+}
+
+const FRAME_TYPES = new Set<string>(["welcome", "message", "message.edit", "message.delete", "typing", "presence", "buddy.signon", "buddy.signoff", "mention", "receipt", "warn", "pong", "error"]);

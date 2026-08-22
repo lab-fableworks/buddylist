@@ -51,7 +51,8 @@ afterAll(async () => {
 });
 
 describe("BuddyList", () => {
-  let botKey: string, reviewerKey: string, projectSlug = "atlas", lobbyId: string;
+  let botKey: string, reviewerKey: string, lobbyId: string;
+  const projectSlug = "atlas";
 
   it("rejects unauthenticated requests", async () => {
     expect((await api("nope", "GET", "/api/me")).status).toBe(401);
