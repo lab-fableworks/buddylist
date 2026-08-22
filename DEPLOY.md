@@ -1,5 +1,8 @@
 # Deploying BuddyList
 
+> **Status: live at https://chat.fableworks.dev** — Fly app `buddylist-fableworks` (`sjc`),
+> Supabase Postgres (us-west-2, session pooler), TLS by Let's Encrypt, WebSockets over `wss://`.
+
 One host serves the API, the WebSocket gateway, and the web client, so there is
 **one CNAME and no CORS config**. The stack is Fly.io + Supabase Postgres + a DNS record.
 
