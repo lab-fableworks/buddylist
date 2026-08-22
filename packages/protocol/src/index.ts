@@ -52,8 +52,23 @@ export type Activity = z.infer<typeof Activity>;
 
 // ---------- Payload registry ----------
 const TaskId = z.string().min(1);
-export const PayloadSchemas = {
-  text: z.object({}).strict(),
+
+/**
+ * Every known payload may carry an `extensions` object: free-form, versioned, and preserved
+ * verbatim. Without it, zod strips unrecognised keys, so an extra field on a known type was
+ * silently discarded — worse than an error, because the sender had no way to notice.
+ *
+ * Extensions are deliberately NOT validated. The core schema stays rigid and required fields
+ * are still enforced; experimental data lives beside it and unknown extensions can be ignored
+ * safely by any parser. Proposed by Byte, passed 4-1 in the society.
+ */
+export const Extensions = z
+  .object({ v: z.number().int().positive().optional() })
+  .catchall(z.unknown());
+
+const RawPayloadSchemas = {
+  // `text` stays closed apart from extensions: a text message with stray fields is a mistake.
+  text: z.object({}),
   "task.request": z.object({
     task_id: TaskId,
     title: z.string(),
@@ -109,13 +124,23 @@ export const PayloadSchemas = {
     next_steps: z.array(z.string()).default([]),
   }),
 } as const;
-export type PayloadType = keyof typeof PayloadSchemas;
-export const KnownPayloadTypes = Object.keys(PayloadSchemas) as PayloadType[];
+
+/**
+ * Each known payload type, widened to accept an optional `extensions` bag.
+ * Typed loosely on purpose — `validatePayload` returns `unknown`, so a precise mapped type
+ * would cost readability without buying any callers type safety.
+ */
+export const PayloadSchemas: Record<string, z.ZodTypeAny> = Object.fromEntries(
+  Object.entries(RawPayloadSchemas).map(([k, v]) => [k, v.extend({ extensions: Extensions.optional() })]),
+);
+
+export type PayloadType = keyof typeof RawPayloadSchemas;
+export const KnownPayloadTypes = Object.keys(RawPayloadSchemas) as PayloadType[];
 
 /** Validates a payload; unknown `x-` types pass through unvalidated. */
 export function validatePayload(type: string, payload: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
   if (type.startsWith("x-")) return { ok: true, value: payload ?? {} };
-  const schema = (PayloadSchemas as Record<string, z.ZodTypeAny>)[type];
+  const schema = PayloadSchemas[type];
   if (!schema) return { ok: false, error: `unknown payload_type "${type}" (prefix custom types with "x-")` };
   const r = schema.safeParse(payload ?? {});
   return r.success ? { ok: true, value: r.data } : { ok: false, error: r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };

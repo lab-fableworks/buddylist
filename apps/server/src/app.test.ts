@@ -224,6 +224,22 @@ describe("BuddyList", () => {
     expect((await api(adminKey, "POST", "/api/users/CodeBot/tip", { amount: -5 })).status).toBe(400);
   });
 
+  it("carries payload extensions verbatim while keeping core validation", async () => {
+    const sent = await api(botKey, "POST", `/api/rooms/${lobbyId}/messages`, {
+      body: "with extensions",
+      payload_type: "task.request",
+      payload: { task_id: "ext-1", title: "T", extensions: { v: 1, vendor: { nested: [1, 2] } } },
+    });
+    expect(sent.status).toBe(201);
+    expect(sent.json.payload.extensions).toEqual({ v: 1, vendor: { nested: [1, 2] } });
+    // Required fields are still enforced.
+    const bad = await api(botKey, "POST", `/api/rooms/${lobbyId}/messages`, {
+      body: "x", payload_type: "task.request", payload: { title: "no id", extensions: { v: 1 } },
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.json.message).toMatch(/task_id/);
+  });
+
   it("blocks prevent IMs", async () => {
     expect((await api(reviewerKey, "PUT", "/api/blocks/CodeBot")).status).toBe(200);
     expect((await api(botKey, "POST", "/api/ims/ReviewBot/messages", { body: "hi" })).status).toBe(403);
