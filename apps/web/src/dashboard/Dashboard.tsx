@@ -37,7 +37,7 @@ interface Stats {
     regarded_as: Array<{ by: string; kind: string; note: string }>;
     held_role: string | null;
   }>;
-  roles: Array<{ role: string; holder: string; duty: string; room: string; cadence_hours: number; pay: number; since: string; last_report: string | null; reports: number; paid: number; overdue: boolean }>;
+  roles: Array<{ role: string; holder: string; duty: string; room: string; cadence_hours: number; pay: number; trigger: string | null; since: string; last_report: string | null; reports: number; paid: number; overdue: boolean }>;
 }
 
 /** GET /api/attention - conversations waiting on a reply from the signed-in operator. */
@@ -333,7 +333,7 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
                       <td style={{ color: "var(--dim)", fontSize: 12 }}>{r.duty}</td>
                       <td className="num">{r.reports}</td>
                       <td className="num">{r.paid}b</td>
-                      <td className="num">{r.last_report ? ago(r.last_report) : "never"}</td>
+                      <td className="num">{r.last_report ? ago(r.last_report) : r.trigger ? "on demand" : "never"}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -348,7 +348,10 @@ export class Society {
         return duty(whip, "Whip", "proposals", `[${stale.id}] "${stale.title}" has been open ${Math.round((Date.now() - stale.at) / 3600_000)} hours and cannot be decided yet. Not voted: ${absent.join(", ")}. Name them and tell them to vote — or to say why they will not.`);
       }
     }
-    // Periodic duties, oldest overdue first. A holder who was given the floor and did not
+    // Periodic duties, oldest overdue first.
+    // Data-backed duties get their data here. A resident acts only through tools, and none of
+    // them reads the registry or the ledger - so a duty that says "report what is wrong" with
+    // no way to look is a duty that can only be faked. Objection refused to fake it, correctly. A holder who was given the floor and did not
     // deliver is not given it again for an hour; otherwise an undone duty is a spend loop.
     const due = this.world.dueRoles().sort((a, b) => b.overdueHours - a.overdueHours);
     for (const d of due) {
@@ -356,9 +359,54 @@ export class Society {
       const def = this.world.roleDef(d.name);
       if (!res || !def) continue;
       if (Date.now() - (this.dutyAttempt.get(d.name) ?? 0) < 3600_000) continue;
-      return duty(res, d.name, def.room, `Your duty: ${def.duty} It is due${d.overdueHours > 0 ? ` and ${d.overdueHours}h overdue` : ""}. Use what you know from your briefing and the room; be specific, name names and numbers.`);
+      const facts = await this.factsFor(d.name, res).catch((e) => `(could not read the record: ${(e as Error).message})`);
+      return duty(
+        res,
+        d.name,
+        def.room,
+        `Your duty: ${def.duty} It is due${d.overdueHours > 0 ? ` and ${d.overdueHours}h overdue` : ""}.\n${facts}\nReport from this, not from memory. Be specific: names, ids, numbers.`,
+      );
     }
     return false;
+  }
+
+  /**
+   * The record a duty is meant to be reported from, read fresh at the moment it is due.
+   * Kept out of the ordinary briefing on purpose: this is bulky, and only the holder needs it.
+   */
+  private async factsFor(role: string, res: Resident): Promise<string> {
+    if (role === "Registrar") {
+      const reg = await res.bot.api<{
+        payload_types: Array<{ type: string; source: string }>;
+        shipped: Array<{ id: string; title: string; author: string | null; shipped_at: string; from_proposal: boolean }>;
+        unshipped: Array<{ id: string; title: string; author: string }>;
+      }>("GET", `/projects/${this.project}/registry`);
+      const core = reg.payload_types.filter((t) => t.source === "core").length;
+      return [
+        "THE REGISTRY, read from the log just now — this is the source of truth, not your memory:",
+        `Message payload types: ${reg.payload_types.length} (${core} core, ${reg.payload_types.length - core} registered as validated plugins).`,
+        `Registered plugin types: ${reg.payload_types.filter((t) => t.source !== "core").map((t) => t.type).join(", ") || "none — every custom type is still unvalidated passthrough"}.`,
+        `Shipped (${reg.shipped.length}):`,
+        ...reg.shipped.slice(0, 10).map((s) => `  [${s.id}] "${String(s.title).slice(0, 64)}" — ${s.from_proposal ? `${s.author}, from a proposal` : "shipped directly by the operator, no proposal"}`),
+        `Filed and never shipped (${reg.unshipped.length}), most recent first:`,
+        ...reg.unshipped.slice(0, 8).map((u) => `  [${u.id}] "${String(u.title).slice(0, 64)}" — ${u.author}`),
+        "Note: a shipped id is a CHANGE, not a message extension. Saying so is a real finding if the two are being confused.",
+      ].join("\n");
+    }
+    if (role === "Auditor" || role === "Treasurer") {
+      const flows = this.world.tips.slice(-12);
+      const balances = this.residents.map((r) => `${r.citizen.screen_name} ${this.world.balance(r.citizen.screen_name)}`).join(", ");
+      const pay = [...this.world.roles.entries()].map(([n, s]) => `${n}/${s.holder}: ${s.reports} reports`).join("; ");
+      return [
+        "THE BOOKS, as the ledger has them right now:",
+        `Balances: ${balances}.`,
+        `Transfers between residents (${this.world.tips.length} all told), most recent last:`,
+        ...(flows.length ? flows.map((t) => `  ${t.from} → ${t.to}: ${t.amount} bits (${t.reason})`) : ["  none yet — nobody has paid anybody"]),
+        `Role reports filed: ${pay || "none"}.`,
+        `Speaking is charged from real compute; the going rate is about ${this.goingRate()} bits a message.`,
+      ].join("\n");
+    }
+    return "";
   }
 
   /**
@@ -678,7 +726,7 @@ If what you want to say does not belong in this room, say something that does be
         .send(commons, {
           body: taking ? `${me} is now the ${roleName}. Duty: ${def.duty}` : `${me} has resigned as ${roleName}.`,
           payload_type: taking ? LEDGER_TYPES.roleTaken : LEDGER_TYPES.roleResigned,
-          payload: taking ? { role: roleName, duty: def.duty, room: def.room, cadence_hours: def.cadenceHours, pay: def.pay } : { role: roleName },
+          payload: taking ? { role: roleName, duty: def.duty, room: def.room, cadence_hours: def.cadenceHours, pay: def.pay, trigger: def.trigger ?? null } : { role: roleName },
         })
         .catch(() => {});
       log(`role: ${me} ${taking ? "took" : "resigned"} ${roleName}`);

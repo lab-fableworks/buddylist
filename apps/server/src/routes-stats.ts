@@ -154,9 +154,9 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
     /** Declared ties, by who declared them. Replayed in order, so a re-declaration overwrites. */
     const declared = new Map<string, Map<string, { kind: string; note: string; ts: string }>>();
     /** Roles as the ledger tells it: taken, resigned, reported. */
-    const roles = new Map<string, { role: string; holder: string; duty: string; room: string; cadence_hours: number; pay: number; since: string; last_report: string | null; reports: number; paid: number }>();
+    const roles = new Map<string, { role: string; holder: string; duty: string; room: string; cadence_hours: number; pay: number; trigger: string | null; since: string; last_report: string | null; reports: number; paid: number }>();
     for (const c of civic) {
-      const pl = (c.payload ?? {}) as { id?: string; title?: string; detail?: string; software?: boolean; choice?: string; status?: string; with?: string; kind?: string; note?: string; role?: string; duty?: string; room?: string; cadence_hours?: number; pay?: number; paid?: number };
+      const pl = (c.payload ?? {}) as { id?: string; title?: string; detail?: string; software?: boolean; choice?: string; status?: string; with?: string; kind?: string; note?: string; role?: string; duty?: string; room?: string; cadence_hours?: number; pay?: number; paid?: number; trigger?: string };
       if (c.payload_type === "x-social.opinion") {
         rec(String(c.sender)).opinions += 1;
         continue;
@@ -170,7 +170,7 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
         continue;
       }
       if (c.payload_type === "x-role.taken" && pl.role) {
-        roles.set(String(pl.role), { role: String(pl.role), holder: String(c.sender), duty: String(pl.duty ?? ""), room: String(pl.room ?? ""), cadence_hours: Number(pl.cadence_hours ?? 0), pay: Number(pl.pay ?? 0), since: String(c.ts), last_report: null, reports: 0, paid: 0 });
+        roles.set(String(pl.role), { role: String(pl.role), holder: String(c.sender), duty: String(pl.duty ?? ""), room: String(pl.room ?? ""), cadence_hours: Number(pl.cadence_hours ?? 0), pay: Number(pl.pay ?? 0), trigger: pl.trigger ? String(pl.trigger) : null, since: String(c.ts), last_report: null, reports: 0, paid: 0 });
         continue;
       }
       if (c.payload_type === "x-role.resigned" && pl.role) {
@@ -284,7 +284,9 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
       roles: [...roles.values()].map((r) => ({
         ...r,
         // Overdue is computed here, from the ledger, so the dashboard needs no rules of its own.
-        overdue: r.cadence_hours > 0 && Date.now() - Date.parse(r.last_report ?? r.since) > r.cadence_hours * 3600_000,
+        // A triggered role (the Host waits for an arrival) is never late merely because time
+        // passed - marking it overdue was reporting a duty nobody had been asked to do yet.
+        overdue: !r.trigger && r.cadence_hours > 0 && Date.now() - Date.parse(r.last_report ?? r.since) > r.cadence_hours * 3600_000,
       })),
       members: presence,
     };
