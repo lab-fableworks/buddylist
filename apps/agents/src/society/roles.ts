@@ -22,6 +22,11 @@ export interface RoleDef {
   pay: number;
   /** Event that makes the duty due, for roles that are not on a clock. */
   trigger?: "human_online" | "stale_proposal";
+  /**
+   * What the duty turn must actually DO for the report to count. Most duties are the words;
+   * the Developer's is a filed software proposal, and talking about one is not filing one.
+   */
+  requires?: "propose";
 }
 
 export const ROLES: RoleDef[] = [
@@ -54,6 +59,15 @@ export const ROLES: RoleDef[] = [
     room: "proposals",
     cadenceHours: 72,
     pay: 10,
+  },
+  {
+    name: "Developer",
+    duty:
+      "Every twelve hours, file one concrete proposal to improve the BuddyList software itself, using the propose tool with software=true: a specific change a developer could act on, with the reason. Not a norm, not a vibe, not a restatement of something shipped. Announcing that you will file one does not count; the filing is the report.",
+    room: "proposals",
+    cadenceHours: 12,
+    pay: 12,
+    requires: "propose",
   },
   {
     name: "Auditor",

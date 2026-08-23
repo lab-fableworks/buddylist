@@ -56,6 +56,8 @@ export class Society {
   private hostDue = false;
   /** Proposal id -> when the Whip last named the absentees, so one stale proposal is not nagged every tick. */
   private whipped = new Map<string, number>();
+  /** Role -> when its holder was last given the floor. A duty that was not done is retried hourly, not every tick. */
+  private dutyAttempt = new Map<string, number>();
 
   constructor(
     private url: string,
@@ -285,8 +287,16 @@ export class Society {
       const conversationId = this.rooms.get(room);
       if (!conversationId) return false;
       const me = res.citizen.screen_name;
-      const said = await this.takeTurn(res, conversationId, `You are the ${role}. ${nudge} This is your report; say it plainly in the room.`, room);
-      if (!said) return true; // they took the turn and chose silence: no report, no pay
+      const def = this.world.roleDef(role);
+      this.dutyAttempt.set(role, Date.now());
+      const turn = await this.takeTurn(res, conversationId, `You are the ${role}. ${nudge} This is your report; say it plainly in the room.`, room);
+      if (!turn.said) return true; // they took the turn and chose silence: no report, no pay
+      if (def?.requires === "propose" && !turn.proposedSoftware) {
+        // Words are not the deliverable here. The duty stays due; they get the floor again in an hour.
+        log(`duty: ${me} spoke as ${role} but filed no software proposal — not a report`);
+        await res.bot.send(conversationId, `(${role} duty not met — no software proposal was filed. It is still due.)`).catch(() => {});
+        return true;
+      }
       const r = this.world.fileReport(role, me);
       await res.bot
         .send(conversationId, { body: `(${role} report filed${r.paid ? ` — paid ${r.paid} bits` : ""})`, payload_type: LEDGER_TYPES.roleReport, payload: { role, paid: r.paid } })
@@ -315,12 +325,14 @@ export class Society {
         return duty(whip, "Whip", "proposals", `[${stale.id}] "${stale.title}" has been open ${Math.round((Date.now() - stale.at) / 3600_000)} hours and cannot be decided yet. Not voted: ${absent.join(", ")}. Name them and tell them to vote — or to say why they will not.`);
       }
     }
-    // Periodic duties, oldest overdue first.
+    // Periodic duties, oldest overdue first. A holder who was given the floor and did not
+    // deliver is not given it again for an hour; otherwise an undone duty is a spend loop.
     const due = this.world.dueRoles().sort((a, b) => b.overdueHours - a.overdueHours);
     for (const d of due) {
       const res = awakeHolder(d.name);
       const def = this.world.roleDef(d.name);
       if (!res || !def) continue;
+      if (Date.now() - (this.dutyAttempt.get(d.name) ?? 0) < 3600_000) continue;
       return duty(res, d.name, def.room, `Your duty: ${def.duty} It is due${d.overdueHours > 0 ? ` and ${d.overdueHours}h overdue` : ""}. Use what you know from your briefing and the room; be specific, name names and numbers.`);
     }
     return false;
@@ -411,7 +423,7 @@ export class Society {
 
   // ---------------------------------------------------------------- one turn
 
-  private async takeTurn(res: Resident, conversationId: string, nudge: string, roomName?: string): Promise<boolean> {
+  private async takeTurn(res: Resident, conversationId: string, nudge: string, roomName?: string): Promise<{ said: boolean; proposedSoftware: boolean }> {
     const me = res.citizen.screen_name;
     const others = this.residents.map((r) => r.citizen.screen_name).filter((n) => n !== me);
     const away = others.filter((n) => !this.rhythms.presenceOf(n).awake);
@@ -474,7 +486,7 @@ If what you want to say does not belong in this room, say something that does be
 
     if (result.refused) {
       log(`${me} declined to answer (safety); skipping turn`);
-      return false;
+      return { said: false, proposedSoftware: false };
     }
 
     // Keep their activity record current so the buddy list and the Working On window reflect
@@ -518,7 +530,7 @@ If what you want to say does not belong in this room, say something that does be
       void res.bot.setPresence("away", broke).catch(() => {});
       void res.bot.setActivity({ headline: `Away — ${broke}`, project: this.project, detail: `${this.world.balance(me)} bits` }).catch(() => {});
     }
-    return !!result.say;
+    return { said: !!result.say, proposedSoftware: result.actions.some((a) => a.name === "propose" && !!a.input.software) };
   }
 
   // ------------------------------------------------------------------ actions

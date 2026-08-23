@@ -56,6 +56,15 @@ describe("roles", () => {
   });
 });
 
+describe("Developer", () => {
+  it("is the one role whose report is a filed proposal, not words", () => {
+    const dev = ROLES.find((r) => r.name === "Developer")!;
+    expect(dev.requires).toBe("propose");
+    expect(dev.cadenceHours).toBe(12);
+    expect(ROLES.filter((r) => r.requires).map((r) => r.name)).toEqual(["Developer"]);
+  });
+});
+
 describe("ties", () => {
   it("derives relationships from votes and money, and carries declared ones", () => {
     const w = fresh();
