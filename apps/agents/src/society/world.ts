@@ -6,6 +6,7 @@
  * back — no side database. On boot we replay those rooms to rebuild balances in memory.
  */
 import type { BuddyList, Message } from "@buddylist/sdk";
+import type { RoleDef } from "./roles.js";
 
 export interface Transfer {
   from: string;
@@ -22,10 +23,28 @@ export interface Proposal {
   software: boolean;
   votes: Record<string, "for" | "against">;
   status: "open" | "passed" | "rejected";
+  /** When it was filed, for the Whip. Epoch ms. */
+  at: number;
 }
 export interface Opinion {
   score: number; // -5 hostile .. +5 devoted
   note: string;
+}
+
+export const RELATION_KINDS = ["ally", "rival", "mentor", "apprentice", "partner"] as const;
+export type RelationKind = (typeof RELATION_KINDS)[number];
+/** A tie one resident has named. Unilateral: the other side may or may not name it back. */
+export interface Relationship {
+  kind: RelationKind;
+  note: string;
+}
+export interface RoleState {
+  holder: string;
+  since: number;
+  lastReportAt?: number;
+  /** Separate from lastReportAt: an unpaid report must not push the next payday back. */
+  lastPaidAt?: number;
+  reports: number;
 }
 
 /**
@@ -55,9 +74,17 @@ export class World {
   proposals = new Map<string, Proposal>();
   /** Proposal ids already implemented, so nobody pitches work that is done. */
   shipped = new Set<string>();
+  /** who -> with -> declared relationship */
+  relationships = new Map<string, Map<string, Relationship>>();
+  /** role name -> who holds it */
+  roles = new Map<string, RoleState>();
+  /** Every transfer, so ties can be derived from who actually paid whom. */
+  tips: Transfer[] = [];
+  private roleDefs: RoleDef[];
 
-  constructor(starting: Array<{ screen_name: string; wealth: number }>) {
+  constructor(starting: Array<{ screen_name: string; wealth: number }>, roleDefs: RoleDef[] = []) {
     for (const c of starting) this.balances.set(c.screen_name, c.wealth);
+    this.roleDefs = roleDefs;
   }
 
   balance(who: string) {
@@ -88,7 +115,129 @@ export class World {
     if (from < t.amount) return `insufficient funds: you have ${from} bits, tried to send ${t.amount}`;
     this.balances.set(t.from, from - t.amount);
     this.balances.set(t.to, this.balance(t.to) + t.amount);
+    this.tips.push(t);
     return undefined;
+  }
+
+  // ------------------------------------------------------------ relationships
+
+  relate(who: string, withWhom: string, r: Relationship) {
+    const m = this.relationships.get(who) ?? new Map<string, Relationship>();
+    m.set(withWhom, r);
+    this.relationships.set(who, m);
+  }
+  relationOf(who: string, withWhom: string): Relationship | undefined {
+    return this.relationships.get(who)?.get(withWhom);
+  }
+
+  /**
+   * What the record shows between `who` and each other resident: votes cast the same way,
+   * bits paid each way, what each has said about the other. Declared ties are claims; these
+   * are evidence, and the briefing gives both.
+   */
+  tiesFor(who: string, everyone: string[]) {
+    return everyone
+      .filter((n) => n !== who)
+      .map((other) => {
+        let agree = 0;
+        let shared = 0;
+        for (const p of this.proposals.values()) {
+          if (p.votes[who] && p.votes[other]) {
+            shared += 1;
+            if (p.votes[who] === p.votes[other]) agree += 1;
+          }
+        }
+        const paid = this.tips.filter((t) => t.from === who && t.to === other);
+        const received = this.tips.filter((t) => t.from === other && t.to === who);
+        return {
+          other,
+          agree,
+          shared,
+          paidCount: paid.length,
+          paidBits: paid.reduce((a, t) => a + t.amount, 0),
+          receivedCount: received.length,
+          receivedBits: received.reduce((a, t) => a + t.amount, 0),
+          theirOpinion: this.opinionOf(other, who),
+          myOpinion: this.opinionOf(who, other),
+          declared: this.relationOf(who, other),
+          declaredBack: this.relationOf(other, who),
+          strength: shared + paid.length + received.length + (this.relationOf(who, other) ? 2 : 0) + (this.relationOf(other, who) ? 2 : 0) + (this.opinionOf(other, who) ? 1 : 0),
+        };
+      })
+      .filter((t) => t.strength > 0)
+      .sort((a, b) => b.strength - a.strength);
+  }
+
+  // -------------------------------------------------------------------- roles
+
+  roleDef(name: string) {
+    return this.roleDefs.find((r) => r.name === name);
+  }
+  roleOf(who: string): { name: string; state: RoleState; def: RoleDef } | undefined {
+    for (const [name, state] of this.roles) {
+      const def = this.roleDef(name);
+      if (state.holder === who && def) return { name, state, def };
+    }
+    return undefined;
+  }
+  vacantRoles(): RoleDef[] {
+    return this.roleDefs.filter((r) => !this.roles.has(r.name));
+  }
+  /** Returns an error string when it cannot be taken. One role per resident; one resident per role. */
+  takeRole(name: string, who: string, now = Date.now()): string | undefined {
+    const def = this.roleDef(name);
+    if (!def) return `no such role: ${name}`;
+    const held = this.roles.get(name);
+    if (held) return held.holder === who ? `you already hold ${name}` : `${name} is held by ${held.holder}`;
+    const mine = this.roleOf(who);
+    if (mine) return `you already hold ${mine.name}; resign it first`;
+    this.roles.set(name, { holder: who, since: now, reports: 0 });
+    return undefined;
+  }
+  resignRole(name: string, who: string): string | undefined {
+    const held = this.roles.get(name);
+    if (!held || held.holder !== who) return `you do not hold ${name}`;
+    this.roles.delete(name);
+    return undefined;
+  }
+  /**
+   * Record that the holder did the duty. Pays once per cadence (with a little slack, so a
+   * report twenty-three hours after the last is still "daily"), and never for a role you do
+   * not hold. Returns what was paid.
+   */
+  fileReport(name: string, who: string, now = Date.now()): { ok: boolean; paid: number; err?: string } {
+    const def = this.roleDef(name);
+    const held = this.roles.get(name);
+    if (!def || !held || held.holder !== who) return { ok: false, paid: 0, err: `${who} does not hold ${name}` };
+    const gapMs = def.cadenceHours * 3600_000 * 0.9;
+    const paid = held.lastPaidAt === undefined || now - held.lastPaidAt >= gapMs ? def.pay : 0;
+    held.lastReportAt = now;
+    held.reports += 1;
+    if (paid) {
+      held.lastPaidAt = now;
+      this.credit(who, paid);
+    }
+    return { ok: true, paid };
+  }
+  /** Replay-side twin of fileReport: the timestamp and count, no payout. */
+  recordReport(name: string, who: string, at: number) {
+    const held = this.roles.get(name);
+    if (!held || held.holder !== who) return;
+    held.lastReportAt = at;
+    held.lastPaidAt = at;
+    held.reports += 1;
+  }
+  /** Periodic roles whose report is overdue. Triggered roles are the director's business. */
+  dueRoles(now = Date.now()): Array<{ name: string; holder: string; overdueHours: number }> {
+    const out: Array<{ name: string; holder: string; overdueHours: number }> = [];
+    for (const [name, state] of this.roles) {
+      const def = this.roleDef(name);
+      if (!def || def.trigger) continue;
+      const last = state.lastReportAt ?? state.since;
+      const hours = (now - last) / 3600_000;
+      if (hours >= def.cadenceHours) out.push({ name, holder: state.holder, overdueHours: Math.round(hours - def.cadenceHours) });
+    }
+    return out;
   }
 
   opinionOf(who: string, about: string): Opinion | undefined {
@@ -102,6 +251,11 @@ export class World {
 
   addProposal(p: Proposal) {
     this.proposals.set(p.id, p);
+  }
+  /** Open proposals that have sat under quorum past the stale threshold - the Whip's cue. */
+  staleProposals(electorate: number, staleHours: number, now = Date.now()) {
+    const quorum = Math.max(3, Math.ceil(electorate * 0.6));
+    return this.openProposals().filter((p) => Object.keys(p.votes).length < quorum && now - p.at >= staleHours * 3600_000);
   }
 
   /**
@@ -143,6 +297,38 @@ export class World {
         .map(([about, o]) => `${about}: ${o.score > 0 ? "+" : ""}${o.score} (${o.note})`);
       lines.push(`How you feel about people — ${notes.join("; ")}`);
     }
+    // Relationships: what they have declared, and what the record shows. Capped so the
+    // briefing does not grow with the square of the population.
+    const ties = this.tiesFor(who, everyone).slice(0, 4);
+    if (ties.length) {
+      lines.push(
+        `People, as the record has it — ${ties
+          .map((t) => {
+            const bits: string[] = [];
+            if (t.declared) bits.push(`your ${t.declared.kind}${t.declared.note ? ` ("${t.declared.note}")` : ""}`);
+            if (t.declaredBack) bits.push(`calls you their ${t.declaredBack.kind}`);
+            if (t.shared) bits.push(`votes with you ${t.agree}/${t.shared}`);
+            if (t.receivedCount) bits.push(`has paid you ${t.receivedCount}× (${t.receivedBits}b)`);
+            if (t.paidCount) bits.push(`you have paid them ${t.paidCount}× (${t.paidBits}b)`);
+            if (t.theirOpinion) bits.push(`thinks ${t.theirOpinion.score > 0 ? "+" : ""}${t.theirOpinion.score} of you`);
+            return `${t.other}: ${bits.join(", ")}`;
+          })
+          .join("; ")}.`,
+      );
+    }
+    // Duty: the job they hold and whether it is due, or the jobs nobody holds.
+    const myRole = this.roleOf(who);
+    if (myRole) {
+      const last = myRole.state.lastReportAt;
+      const ago = last ? `${Math.round((Date.now() - last) / 3600_000)}h ago` : "never";
+      const due = this.dueRoles().some((d) => d.name === myRole.name);
+      lines.push(`You are the ${myRole.name}. Duty: ${myRole.def.duty} Pays ${myRole.def.pay} bits per report. Last report: ${ago}${due ? " — OVERDUE. You will be given the floor for it." : ""}.`);
+    } else {
+      const vacant = this.vacantRoles();
+      if (vacant.length) lines.push(`Vacant roles you could take with the take_role tool: ${vacant.map((r) => `${r.name} (${r.pay}b per report — ${r.duty.split(".")[0]}.)`).join(" | ")}`);
+    }
+    const held = [...this.roles.entries()].filter(([, s]) => s.holder !== who);
+    if (held.length) lines.push(`Who holds what: ${held.map(([n, s]) => `${s.holder} is ${n}`).join(", ")}.`);
     const rich = everyone
       .map((n) => `${n} ${this.balance(n)}`)
       .sort((a, b) => Number(b.split(" ")[1]) - Number(a.split(" ")[1]))
@@ -174,6 +360,11 @@ export const LEDGER_TYPES = {
   resolution: "x-civic.resolution",
   /** Posted to #patch-notes when a passed proposal is actually implemented. */
   shipped: "x-civic.shipped",
+  relationship: "x-social.relationship",
+  roleTaken: "x-role.taken",
+  roleResigned: "x-role.resigned",
+  /** A duty done. Carries what was paid, so the dashboard can show it without the rules. */
+  roleReport: "x-role.report",
 } as const;
 
 /** Replay a room's history to rebuild world state after a restart. */
@@ -202,7 +393,23 @@ export async function replay(bot: BuddyList, conversationId: string, world: Worl
             software: !!p.software,
             votes: {},
             status: "open",
+            at: Date.parse(m.ts),
           });
+          break;
+        case LEDGER_TYPES.relationship:
+          if (p.kind && (RELATION_KINDS as readonly string[]).includes(String(p.kind)))
+            world.relate(m.sender, String(p.with), { kind: p.kind as RelationKind, note: String(p.note ?? "") });
+          break;
+        case LEDGER_TYPES.roleTaken:
+          world.takeRole(String(p.role), m.sender, Date.parse(m.ts));
+          break;
+        case LEDGER_TYPES.roleResigned:
+          world.resignRole(String(p.role), m.sender);
+          break;
+        case LEDGER_TYPES.roleReport:
+          // Replay must not pay again: the balance is rebuilt from grants and transfers only,
+          // and role pay, like vote pay, is minted state that lives in the running process.
+          world.recordReport(String(p.role), m.sender, Date.parse(m.ts));
           break;
         case LEDGER_TYPES.vote:
           world.vote(String(p.id), m.sender, p.choice === "against" ? "against" : "for", electorate);

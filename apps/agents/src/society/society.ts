@@ -13,10 +13,11 @@ import { BuddyList, type Message } from "@buddylist/sdk";
 import { CITIZENS, ROOM_PURPOSE, SOCIETY_ROOMS, type Citizen } from "./citizens.js";
 import { Brain, DEFAULT_MODEL, type TurnAction } from "./brain.js";
 import { Budget } from "./budget.js";
-import { EARNINGS, LEDGER_TYPES, World, replay, speechCost } from "./world.js";
+import { EARNINGS, LEDGER_TYPES, RELATION_KINDS, World, replay, speechCost, type Relationship } from "./world.js";
 import { Outreach, outreachConfig } from "./outreach.js";
 import { Rhythms, crowdFactor, hoursOf, traitsOf } from "./rhythm.js";
 import { deNarrate, looksNarrated, narrationShare, promisesProposal, wordCount } from "./style.js";
+import { ROLES, STALE_PROPOSAL_HOURS } from "./roles.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -51,6 +52,10 @@ export class Society {
   private humans: string[] = [];
   /** Residents who said they would file a proposal and did not, with nudges remaining. */
   private promised = new Map<string, number>();
+  /** Set when the human arrives, cleared when the Host has greeted them. */
+  private hostDue = false;
+  /** Proposal id -> when the Whip last named the absentees, so one stale proposal is not nagged every tick. */
+  private whipped = new Map<string, number>();
 
   constructor(
     private url: string,
@@ -58,7 +63,7 @@ export class Society {
     apiKey: string,
     opts: { dailyUsd: number; model?: string },
   ) {
-    this.world = new World(CITIZENS);
+    this.world = new World(CITIZENS, ROLES);
     this.budget = new Budget(opts.model ?? DEFAULT_MODEL, opts.dailyUsd);
     this.apiKey = apiKey;
     this.model = opts.model ?? DEFAULT_MODEL;
@@ -86,6 +91,7 @@ export class Society {
       humans: this.humans,
       human_state: this.humanState ?? "unknown",
       rhythms: this.rhythms.status(this.residents.map((r) => r.citizen.screen_name)),
+      roles: [...this.world.roles.entries()].map(([name, s]) => ({ role: name, holder: s.holder, reports: s.reports, last_report: s.lastReportAt ? new Date(s.lastReportAt).toISOString() : null })),
       model: this.model,
     };
   }
@@ -135,7 +141,8 @@ export class Society {
     const proposals = this.rooms.get("proposals");
     const gossip = this.rooms.get("gossip");
     const patchNotes = this.rooms.get("patch-notes");
-    for (const id of [market, proposals, gossip, patchNotes]) {
+    const commons = this.rooms.get("commons");
+    for (const id of [market, proposals, gossip, patchNotes, commons]) {
       if (id) await replay(host, id, this.world, this.residents.length).catch(() => {});
     }
     log("world restored:", [...this.world.balances].map(([k, v]) => `${k}=${v}`).join(" "));
@@ -156,6 +163,9 @@ export class Society {
         const u = await this.residents[0].bot.api<{ presence: { state: string } }>("GET", `/users/${this.humans[0]}`);
         const next = u.presence.state;
         if (next !== this.humanState) log(`${this.humans[0]} is now ${next}`);
+        // Arriving, not booting: on the first poll humanState is unknown and a greeting on
+        // every deploy would be noise.
+        if (next === "online" && this.humanState !== undefined && this.humanState !== "online" && this.world.roles.has("Host")) this.hostDue = true;
         this.humanState = next;
       } catch {
         /* transient */
@@ -251,12 +261,69 @@ export class Society {
           this.world.credit(responder.citizen.screen_name, EARNINGS.servedHuman);
           continue;
         }
+        if (await this.maybeDoDuty()) continue;
         if (await this.maybeReachOut()) continue;
         await this.spontaneous();
       } catch (e) {
         log("turn failed:", (e as Error).message);
       }
     }
+  }
+
+  /**
+   * Give a role-holder the floor when their duty is due. What they say on that turn is the
+   * report: it is filed and paid without a separate tool call, because a duty you can forget
+   * to file is a duty that goes unfiled. Returns true when a duty turn was taken.
+   */
+  private async maybeDoDuty(): Promise<boolean> {
+    const awakeHolder = (role: string) => {
+      const s = this.world.roles.get(role);
+      const res = s && this.residents.find((r) => r.citizen.screen_name === s.holder);
+      return res && this.rhythms.presenceOf(res.citizen.screen_name).awake ? res : undefined;
+    };
+    const duty = async (res: Resident, role: string, room: string, nudge: string) => {
+      const conversationId = this.rooms.get(room);
+      if (!conversationId) return false;
+      const me = res.citizen.screen_name;
+      const said = await this.takeTurn(res, conversationId, `You are the ${role}. ${nudge} This is your report; say it plainly in the room.`, room);
+      if (!said) return true; // they took the turn and chose silence: no report, no pay
+      const r = this.world.fileReport(role, me);
+      await res.bot
+        .send(conversationId, { body: `(${role} report filed${r.paid ? ` — paid ${r.paid} bits` : ""})`, payload_type: LEDGER_TYPES.roleReport, payload: { role, paid: r.paid } })
+        .catch(() => {});
+      log(`duty: ${me} reported as ${role}${r.paid ? ` (+${r.paid}b)` : " (within cadence, unpaid)"}`);
+      return true;
+    };
+
+    // The human just arrived and someone is the Host.
+    if (this.hostDue) {
+      const host = awakeHolder("Host");
+      if (host) {
+        this.hostDue = false;
+        return duty(host, "Host", "commons", `${this.humans[0]} just came online. Greet them briefly and tell them what they missed that matters — a decision, a fight, a proposal, money that moved. Two or three sentences.`);
+      }
+    }
+    // A proposal has sat under quorum too long and someone is the Whip.
+    const whip = awakeHolder("Whip");
+    if (whip) {
+      const stale = this.world
+        .staleProposals(this.residents.length, STALE_PROPOSAL_HOURS)
+        .find((p) => Date.now() - (this.whipped.get(p.id) ?? 0) > 6 * 3600_000);
+      if (stale) {
+        this.whipped.set(stale.id, Date.now());
+        const absent = this.residents.map((r) => r.citizen.screen_name).filter((n) => !stale.votes[n] && n !== whip.citizen.screen_name);
+        return duty(whip, "Whip", "proposals", `[${stale.id}] "${stale.title}" has been open ${Math.round((Date.now() - stale.at) / 3600_000)} hours and cannot be decided yet. Not voted: ${absent.join(", ")}. Name them and tell them to vote — or to say why they will not.`);
+      }
+    }
+    // Periodic duties, oldest overdue first.
+    const due = this.world.dueRoles().sort((a, b) => b.overdueHours - a.overdueHours);
+    for (const d of due) {
+      const res = awakeHolder(d.name);
+      const def = this.world.roleDef(d.name);
+      if (!res || !def) continue;
+      return duty(res, d.name, def.room, `Your duty: ${def.duty} It is due${d.overdueHours > 0 ? ` and ${d.overdueHours}h overdue` : ""}. Use what you know from your briefing and the room; be specific, name names and numbers.`);
+    }
+    return false;
   }
 
   /**
@@ -344,7 +411,7 @@ export class Society {
 
   // ---------------------------------------------------------------- one turn
 
-  private async takeTurn(res: Resident, conversationId: string, nudge: string, roomName?: string) {
+  private async takeTurn(res: Resident, conversationId: string, nudge: string, roomName?: string): Promise<boolean> {
     const me = res.citizen.screen_name;
     const others = this.residents.map((r) => r.citizen.screen_name).filter((n) => n !== me);
     const away = others.filter((n) => !this.rhythms.presenceOf(n).awake);
@@ -407,7 +474,7 @@ If what you want to say does not belong in this room, say something that does be
 
     if (result.refused) {
       log(`${me} declined to answer (safety); skipping turn`);
-      return;
+      return false;
     }
 
     // Keep their activity record current so the buddy list and the Working On window reflect
@@ -451,6 +518,7 @@ If what you want to say does not belong in this room, say something that does be
       void res.bot.setPresence("away", broke).catch(() => {});
       void res.bot.setActivity({ headline: `Away — ${broke}`, project: this.project, detail: `${this.world.balance(me)} bits` }).catch(() => {});
     }
+    return !!result.say;
   }
 
   // ------------------------------------------------------------------ actions
@@ -483,7 +551,7 @@ If what you want to say does not belong in this room, say something that does be
       const title = String(action.input.title);
       const detail = String(action.input.detail ?? "");
       const software = !!action.input.software;
-      this.world.addProposal({ id, author: me, title, detail, software, votes: {}, status: "open" });
+      this.world.addProposal({ id, author: me, title, detail, software, votes: {}, status: "open", at: Date.now() });
       const proposals = room("proposals");
       if (!proposals) return;
       await res.bot
@@ -536,6 +604,43 @@ If what you want to say does not belong in this room, say something that does be
       // eight residents announcing their feelings in #commons would be unreadable.
       await res.bot.updateProfile({ profile: { mood: { word: mood, why, at: new Date().toISOString() } } }).catch(() => {});
       log(`${me} is feeling ${mood} (${why})`);
+      return;
+    }
+
+    if (action.name === "relate") {
+      const withWhom = String(action.input.with);
+      const kind = String(action.input.kind) as Relationship["kind"];
+      const note = String(action.input.note ?? "").slice(0, 120);
+      if (!this.residents.some((r) => r.citizen.screen_name === withWhom) || !(RELATION_KINDS as readonly string[]).includes(kind)) return;
+      this.world.relate(me, withWhom, { kind, note });
+      const gossip = room("gossip");
+      if (gossip)
+        await res.bot
+          .send(gossip, { body: `(${me} now calls ${withWhom} their ${kind} — ${note})`, payload_type: LEDGER_TYPES.relationship, payload: { with: withWhom, kind, note } })
+          .catch(() => {});
+      log(`relationship: ${me} → ${withWhom}: ${kind} (${note})`);
+      return;
+    }
+
+    if (action.name === "take_role" || action.name === "resign_role") {
+      const roleName = String(action.input.role);
+      const taking = action.name === "take_role";
+      const err = taking ? this.world.takeRole(roleName, me) : this.world.resignRole(roleName, me);
+      const commons = room("commons");
+      if (!commons) return;
+      if (err) {
+        await res.bot.send(commons, `(tried to ${taking ? "take" : "resign"} ${roleName} — ${err})`).catch(() => {});
+        return;
+      }
+      const def = this.world.roleDef(roleName)!;
+      await res.bot
+        .send(commons, {
+          body: taking ? `${me} is now the ${roleName}. Duty: ${def.duty}` : `${me} has resigned as ${roleName}.`,
+          payload_type: taking ? LEDGER_TYPES.roleTaken : LEDGER_TYPES.roleResigned,
+          payload: taking ? { role: roleName, duty: def.duty, room: def.room, cadence_hours: def.cadenceHours, pay: def.pay } : { role: roleName },
+        })
+        .catch(() => {});
+      log(`role: ${me} ${taking ? "took" : "resigned"} ${roleName}`);
       return;
     }
 

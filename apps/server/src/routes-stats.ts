@@ -138,7 +138,8 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
           `SELECT m.payload_type, m.payload, u.screen_name AS sender, m.ts, m.body
              FROM messages m JOIN users u ON u.id = m.sender_id
             WHERE m.conversation_id = ANY($1::uuid[]) AND m.deleted_at IS NULL
-              AND (m.payload_type IN ('x-civic.proposal','x-civic.vote','x-civic.resolution','x-civic.shipped','x-social.opinion')
+              AND (m.payload_type IN ('x-civic.proposal','x-civic.vote','x-civic.resolution','x-civic.shipped','x-social.opinion',
+                                      'x-social.relationship','x-role.taken','x-role.resigned','x-role.report')
                    -- Patch notes written before the shipped payload existed are plain text.
                    -- Ignoring them makes finished work sit in "awaiting your decision" forever.
                    OR m.body ~* '^SHIPPED[^\[]*\[[a-z0-9]+\]')
@@ -150,10 +151,39 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
         );
 
     const proposals: Record<string, Record<string, unknown>> = {};
+    /** Declared ties, by who declared them. Replayed in order, so a re-declaration overwrites. */
+    const declared = new Map<string, Map<string, { kind: string; note: string; ts: string }>>();
+    /** Roles as the ledger tells it: taken, resigned, reported. */
+    const roles = new Map<string, { role: string; holder: string; duty: string; room: string; cadence_hours: number; pay: number; since: string; last_report: string | null; reports: number; paid: number }>();
     for (const c of civic) {
-      const pl = (c.payload ?? {}) as { id?: string; title?: string; detail?: string; software?: boolean; choice?: string; status?: string };
+      const pl = (c.payload ?? {}) as { id?: string; title?: string; detail?: string; software?: boolean; choice?: string; status?: string; with?: string; kind?: string; note?: string; role?: string; duty?: string; room?: string; cadence_hours?: number; pay?: number; paid?: number };
       if (c.payload_type === "x-social.opinion") {
         rec(String(c.sender)).opinions += 1;
+        continue;
+      }
+      if (c.payload_type === "x-social.relationship") {
+        if (pl.with && pl.kind) {
+          const m = declared.get(String(c.sender)) ?? new Map();
+          m.set(String(pl.with), { kind: String(pl.kind), note: String(pl.note ?? ""), ts: String(c.ts) });
+          declared.set(String(c.sender), m);
+        }
+        continue;
+      }
+      if (c.payload_type === "x-role.taken" && pl.role) {
+        roles.set(String(pl.role), { role: String(pl.role), holder: String(c.sender), duty: String(pl.duty ?? ""), room: String(pl.room ?? ""), cadence_hours: Number(pl.cadence_hours ?? 0), pay: Number(pl.pay ?? 0), since: String(c.ts), last_report: null, reports: 0, paid: 0 });
+        continue;
+      }
+      if (c.payload_type === "x-role.resigned" && pl.role) {
+        if (roles.get(String(pl.role))?.holder === String(c.sender)) roles.delete(String(pl.role));
+        continue;
+      }
+      if (c.payload_type === "x-role.report" && pl.role) {
+        const r = roles.get(String(pl.role));
+        if (r && r.holder === String(c.sender)) {
+          r.last_report = String(c.ts);
+          r.reports += 1;
+          r.paid += Number(pl.paid ?? 0);
+        }
         continue;
       }
       const plain = /^SHIPPED[^[]*\[([a-z0-9]+)\]/im.exec(String(c.body ?? ""));
@@ -235,6 +265,10 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
           mood: (profile.mood as { word: string; why: string; at: string } | undefined) ?? null,
           skills: ((m.capabilities ?? {}) as { skills?: string[] }).skills ?? [],
           learned: learnedFor(m.screen_name),
+          /** Ties this resident has named, and ties others have named toward them. */
+          relationships: [...(declared.get(m.screen_name)?.entries() ?? [])].map(([w, r]) => ({ with: w, kind: r.kind, note: r.note })),
+          regarded_as: [...declared.entries()].flatMap(([by, mm]) => (mm.has(m.screen_name) ? [{ by, kind: mm.get(m.screen_name)!.kind, note: mm.get(m.screen_name)!.note }] : [])),
+          held_role: [...roles.values()].find((r) => r.holder === m.screen_name)?.role ?? null,
         };
       }),
     );
@@ -247,6 +281,11 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
       engagement: { per_day: perDay, per_person: perPerson, per_room: perRoom, per_type: perType },
       economy: { balances, minted, moved, recent_flows: flows.slice(-25).reverse() },
       proposals: Object.values(proposals).sort((a, b) => (String(a.ts) < String(b.ts) ? 1 : -1)),
+      roles: [...roles.values()].map((r) => ({
+        ...r,
+        // Overdue is computed here, from the ledger, so the dashboard needs no rules of its own.
+        overdue: r.cadence_hours > 0 && Date.now() - Date.parse(r.last_report ?? r.since) > r.cadence_hours * 3600_000,
+      })),
       members: presence,
     };
   });

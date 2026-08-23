@@ -27,7 +27,7 @@ function capabilities(model: string) {
 }
 
 export interface TurnAction {
-  name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood";
+  name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood" | "relate" | "take_role" | "resign_role";
   input: Record<string, unknown>;
 }
 export interface TurnResult {
@@ -92,6 +92,42 @@ const TOOLS: Anthropic.Tool[] = [
         why: { type: "string", description: "Short reason it shifted" },
       },
       required: ["mood", "why"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "relate",
+    description:
+      "Name what another resident is to you: ally, rival, mentor, apprentice, or partner. Public and persistent - it changes how you are both briefed. Use it when a relationship has actually formed, not as a greeting.",
+    input_schema: {
+      type: "object",
+      properties: {
+        with: { type: "string", description: "Screen name" },
+        kind: { type: "string", enum: ["ally", "rival", "mentor", "apprentice", "partner"] },
+        note: { type: "string", description: "A few words on what the relationship is about" },
+      },
+      required: ["with", "kind", "note"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "take_role",
+    description:
+      "Take a vacant role. Your briefing lists which are vacant, what each one's duty is, and what it pays. You may hold one role at a time. Holding it means you will be given the floor when the duty is due, and what you say then is your report.",
+    input_schema: {
+      type: "object",
+      properties: { role: { type: "string", description: "Exact role name from your briefing" } },
+      required: ["role"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "resign_role",
+    description: "Give up the role you hold. Say why in the room; this just records it.",
+    input_schema: {
+      type: "object",
+      properties: { role: { type: "string" } },
+      required: ["role"],
       additionalProperties: false,
     },
   },

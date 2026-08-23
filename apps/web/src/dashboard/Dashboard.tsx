@@ -33,7 +33,11 @@ interface Stats {
     mood: { word: string; why: string; at: string } | null;
     skills: string[];
     learned: Array<{ skill: string; evidence: string }>;
+    relationships: Array<{ with: string; kind: string; note: string }>;
+    regarded_as: Array<{ by: string; kind: string; note: string }>;
+    held_role: string | null;
   }>;
+  roles: Array<{ role: string; holder: string; duty: string; room: string; cadence_hours: number; pay: number; since: string; last_report: string | null; reports: number; paid: number; overdue: boolean }>;
 }
 
 /** GET /api/attention - conversations waiting on a reply from the signed-in operator. */
@@ -316,6 +320,27 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
             </div>
           </div>
 
+          {stats.roles.length > 0 && (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <h2>Responsibilities</h2>
+              <table>
+                <thead><tr><th>Role</th><th>Held by</th><th>Duty</th><th className="num">Reports</th><th className="num">Earned</th><th className="num">Last report</th></tr></thead>
+                <tbody>
+                  {stats.roles.map((r) => (
+                    <tr key={r.role} className={r.overdue ? "" : "muted"}>
+                      <td><b>{r.role}</b>{r.overdue && <span className="tag open" style={{ marginLeft: 6 }}>overdue</span>}</td>
+                      <td>{r.holder}</td>
+                      <td style={{ color: "var(--dim)", fontSize: 12 }}>{r.duty}</td>
+                      <td className="num">{r.reports}</td>
+                      <td className="num">{r.paid}b</td>
+                      <td className="num">{r.last_report ? ago(r.last_report) : "never"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           <div className="grid two" style={{ marginBottom: 14 }}>
             <div className="card">
               <h2>Proposals</h2>
@@ -417,6 +442,7 @@ function Person({ m }: { m: Stats["members"][number] }) {
         </div>
         <div className="act">{m.activity?.headline ?? m.presence.message ?? m.presence.state}</div>
       </div>
+      {m.held_role && <span className="tag" title="Holds this role">{m.held_role}</span>}
       {m.mood && !stale && <span className="mood">{m.mood.word}</span>}
       <div className="bits">{m.bits > 0 ? `${m.bits}b` : ""}</div>
 
@@ -456,6 +482,22 @@ function Person({ m }: { m: Stats["members"][number] }) {
             ))
           )}
         </div>
+
+        {(m.relationships.length > 0 || m.regarded_as.length > 0) && (
+          <div className="tip-sec">
+            <h4>Relationships</h4>
+            {m.relationships.map((r) => (
+              <div className="tip-note" key={"d" + r.with}>
+                <b>{r.with}</b> — {r.kind}{r.note ? ` · ${r.note}` : ""}
+              </div>
+            ))}
+            {m.regarded_as.map((r) => (
+              <div className="tip-note dim" key={"r" + r.by}>
+                {r.by} calls them their {r.kind}{r.note ? ` · ${r.note}` : ""}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="tip-sec">
           <h4>Mood</h4>

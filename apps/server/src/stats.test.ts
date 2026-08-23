@@ -66,6 +66,12 @@ beforeAll(async () => {
   await post(ravenKey, "x-civic.proposal", { id: "p3", title: "A third thing", software: false });
   await post(byteKey, "x-civic.vote", { id: "p2", choice: "for" });
   await post(byteKey, "x-civic.vote", { id: "p3", choice: "against" });
+  // Relationships and roles, as the agents post them.
+  await post(byteKey, "x-social.relationship", { with: "Raven", kind: "ally", note: "we argue and both enjoy it" });
+  await post(ravenKey, "x-role.taken", { role: "Treasurer", duty: "Post the economy daily.", room: "market", cadence_hours: 24, pay: 15 });
+  await post(ravenKey, "x-role.report", { role: "Treasurer", paid: 15 });
+  await post(byteKey, "x-role.taken", { role: "Auditor", duty: "Check the books.", room: "market", cadence_hours: 72, pay: 20 });
+  await post(byteKey, "x-role.resigned", { role: "Auditor" });
 });
 afterAll(async () => {
   await app.close();
@@ -119,6 +125,17 @@ describe("stats", () => {
     // A profile patch must merge, not clobber — setting a mood cannot erase the bio.
     expect(raven.traits).toEqual(["sparing with words", "nocturnal"]);
     expect(raven.skills).toEqual(["aesthetics", "poetry"]);
+  });
+
+  it("reports roles and declared relationships from the ledger", async () => {
+    const s = (await api(adminKey, "GET", "/api/stats/society")).json;
+    expect(s.roles.map((r: { role: string; holder: string; reports: number; paid: number; overdue: boolean }) => [r.role, r.holder, r.reports, r.paid, r.overdue])).toEqual([["Treasurer", "Raven", 1, 15, false]]);
+    const byte = memberOf(s, "Byte") as unknown as { relationships: unknown[]; regarded_as: unknown[]; held_role: string | null };
+    const raven = memberOf(s, "Raven") as unknown as { relationships: unknown[]; regarded_as: unknown[]; held_role: string | null };
+    expect(byte.relationships).toEqual([{ with: "Raven", kind: "ally", note: "we argue and both enjoy it" }]);
+    expect(byte.held_role).toBeNull(); // resigned
+    expect(raven.regarded_as).toEqual([{ by: "Byte", kind: "ally", note: "we argue and both enjoy it" }]);
+    expect(raven.held_role).toBe("Treasurer");
   });
 
   it("counts a resident once per proposal, however many times they vote", async () => {
