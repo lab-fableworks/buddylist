@@ -16,6 +16,7 @@ import { Budget } from "./budget.js";
 import { EARNINGS, LEDGER_TYPES, World, replay, speechCost } from "./world.js";
 import { Outreach, outreachConfig } from "./outreach.js";
 import { Rhythms, crowdFactor, hoursOf, traitsOf } from "./rhythm.js";
+import { deNarrate, looksNarrated, narrationShare, promisesProposal, wordCount } from "./style.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -48,6 +49,8 @@ export class Society {
   private humanState: string | undefined;
   /** Humans in the project — the people residents may reach out to. */
   private humans: string[] = [];
+  /** Residents who said they would file a proposal and did not, with nudges remaining. */
+  private promised = new Map<string, number>();
 
   constructor(
     private url: string,
@@ -355,20 +358,47 @@ export class Society {
       .filter(Boolean)
       .join(" ");
 
-    const situation = roomName
-      ? `You are in #${roomName} — ${ROOM_PURPOSE[roomName] ?? ""} ${whoIsAround}
+    const transcript = this.transcripts.get(conversationId) ?? [];
+    // Contagion breaker. Once a third of the recent lines narrate, the transcript is teaching
+    // the style harder than the rules forbid it, so the rules get said again, right here.
+    const contagion = narrationShare(transcript.slice(-6)) >= 0.34;
+    const situation =
+      (roomName
+        ? `You are in #${roomName} — ${ROOM_PURPOSE[roomName] ?? ""} ${whoIsAround}
 If what you want to say does not belong in this room, say something that does belong here instead.`
-      : `You are in a direct message. ${whoIsAround}`;
+        : `You are in a direct message. ${whoIsAround}`) +
+      (contagion ? "\nThe last few messages here drifted into narration and stage directions. Do not match that style. Type like a person in a chat window: short, no asterisks, no describing what you are doing." : "");
 
-    const result = await res.brain.think({
-      charter: res.citizen.charter,
-      digest: this.world.digestFor(me, [me, ...others]),
-      situation,
-      transcript: this.transcripts.get(conversationId) ?? [],
-      nudge,
-    });
+    // Follow-through. Saying "posting it now" is not posting it.
+    const owed = this.promised.get(me) ?? 0;
+    if (owed > 0) this.promised.set(me, owed - 1);
+    if (owed === 1) this.promised.delete(me);
+    const fullNudge = owed
+      ? `${nudge}\nLast time you said you would file a proposal and you did not use the propose tool. Either call propose now with the actual text, or say plainly why not. Do not say again that you will post it.`
+      : nudge;
 
-    const cost = this.budget.record(result.usage);
+    const ask = (n: string) =>
+      res.brain.think({ charter: res.citizen.charter, digest: this.world.digestFor(me, [me, ...others]), situation, transcript, nudge: n });
+
+    let result = await ask(fullNudge);
+    let cost = this.budget.record(result.usage);
+
+    // The narration guard. One rewrite, at the speaker's expense - both calls are charged, so
+    // narrating costs double, which is the only incentive the prompt cannot already provide.
+    if (result.say && looksNarrated(result.say)) {
+      log(`${me} narrated (${wordCount(result.say)} words); asking for a rewrite`);
+      const retry = await ask(
+        `${fullNudge}\n\nSTOP. What you just wrote was narration — stage directions and prose, not chat. Rewrite it as what you would actually type into an IM window: no asterisks, no describing what you are doing or seeing, under 40 words. Say the thing itself.`,
+      );
+      cost += this.budget.record(retry.usage);
+      // Tool calls from the first attempt were real decisions (a vote, a tip); keep them unless
+      // the rewrite made its own, so nothing is enacted twice.
+      result = { ...retry, actions: retry.actions.length ? retry.actions : result.actions };
+      if (result.say && looksNarrated(result.say)) {
+        result.say = deNarrate(result.say);
+        log(`${me} narrated again; cut to "${result.say.slice(0, 60)}"`);
+      }
+    }
     const bits = speechCost(cost);
     this.world.charge(me, bits);
     this.lastSpeaker = me;
@@ -406,6 +436,13 @@ If what you want to say does not belong in this room, say something that does be
     }
 
     for (const a of result.actions) await this.enact(res, a).catch((e) => log(`${me} action ${a.name} failed:`, (e as Error).message));
+
+    // Promised a proposal without filing one: they get reminded on their next two turns.
+    if (result.actions.some((a) => a.name === "propose")) this.promised.delete(me);
+    else if (result.say && promisesProposal(result.say) && !this.promised.has(me)) {
+      this.promised.set(me, 2);
+      log(`${me} said they would file a proposal and did not`);
+    }
 
     // Breaks start mid-flow, the way they do for people.
     const broke = this.rhythms.maybeStartBreak(me);

@@ -22,10 +22,13 @@ export interface Rhythm {
 export const RHYTHMS: Record<string, Rhythm> = {
   Raven: { awake: [19, 7], breakChance: 0.1, doing: ["out walking", "reading something old", "watching the light change"] },
   Byte: { awake: [10, 3], breakChance: 0.12, doing: ["deep in a codebase", "chasing a bug", "reading the spec again"] },
-  Objection: { awake: [8, 19], breakChance: 0.08, doing: ["reviewing something", "drafting", "away from the desk"] },
+  // Doc and Objection used to keep 08-19 UTC, which is precisely when the human is not here.
+  // The lawyer and the scientist - the two who would have read Sterling's proposals closely -
+  // were asleep for every conversation that mattered. Their days now run into the evening.
+  Objection: { awake: [12, 1], breakChance: 0.08, doing: ["reviewing something", "drafting", "away from the desk"] },
   Sterling: { awake: [6, 22], breakChance: 0.15, doing: ["on a call", "in a meeting", "working an angle elsewhere"] },
   Nova: { awake: [11, 4], breakChance: 0.18, doing: ["making something", "in the middle of a piece", "lost track of time"] },
-  Doc: { awake: [8, 20], breakChance: 0.1, doing: ["running an experiment", "reading a paper", "checking the numbers"] },
+  Doc: { awake: [14, 2], breakChance: 0.1, doing: ["running an experiment", "reading a paper", "checking the numbers"] },
   Marlowe: { awake: [9, 2], breakChance: 0.14, doing: ["catching up with someone", "on the phone", "hearing about it firsthand"] },
   Coach: { awake: [5, 21], breakChance: 0.1, doing: ["training", "out for a run", "planning the week"] },
 };
