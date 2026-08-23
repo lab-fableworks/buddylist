@@ -159,6 +159,18 @@ export function toOpenAITools(tools: ChatTool[]): OpenAI.Chat.Completions.ChatCo
  * chat room that lands as raw markup, so it is cut here rather than left to the narration
  * guard, which is looking for prose and would not recognise it.
  */
+/**
+ * Cut a reply back to its last finished sentence.
+ *
+ * Only used when the model stopped because it ran out of room. Posting the fragment it died
+ * on ("...Makes you") reads as a bug to everyone in the room; ending a sentence early just
+ * reads as brevity. If there is no sentence break at all, the fragment beats nothing.
+ */
+export function trimToSentence(text: string): string {
+  const cut = Math.max(text.lastIndexOf("."), text.lastIndexOf("!"), text.lastIndexOf("?"));
+  return cut > 0 ? text.slice(0, cut + 1).trim() : text.trim();
+}
+
 /** Deliberately no backreference: <think> closed by </thinking> has still shown its working. */
 const REASONING_BLOCK = /<(?:think|thinking|reasoning)>[\s\S]*?<\/(?:think|thinking|reasoning)>/gi;
 /** An unclosed opener means the block ran to the token limit; drop the remainder. */
@@ -191,8 +203,9 @@ export function fromOpenAI(res: OpenAI.Chat.Completions.ChatCompletion): ChatRes
     }
   }
   const cached = res.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  const said = stripReasoning(msg?.content ?? "");
   return {
-    text: stripReasoning(msg?.content ?? ""),
+    text: choice?.finish_reason === "length" ? trimToSentence(said) : said,
     calls,
     // `refusal` is the structured form; content_filter is what most compatible servers send.
     refused: !!msg?.refusal || choice?.finish_reason === "content_filter",
@@ -210,6 +223,9 @@ export class OpenAICompatProvider implements Provider {
   readonly kind = "openai" as const;
   private client: OpenAI;
 
+  /** Whether this gateway understands OpenRouter's `reasoning` switch. */
+  private noReasoning: boolean;
+
   constructor(
     readonly model: string,
     opts: { baseURL?: string; apiKey?: string } = {},
@@ -219,21 +235,29 @@ export class OpenAICompatProvider implements Provider {
     const apiKey = opts.apiKey ?? process.env.SOCIETY_OPENAI_API_KEY ?? "not-needed";
     if (!baseURL) throw new Error(`model "${OPENAI_PREFIX}${model}" needs SOCIETY_OPENAI_BASE_URL (e.g. https://openrouter.ai/api/v1)`);
     this.client = new OpenAI({ baseURL, apiKey, maxRetries: 2, timeout: 60_000 });
+    // Only OpenRouter is known to accept it; a strict OpenAI endpoint 400s on an unknown
+    // field. SOCIETY_OPENAI_REASONING=1 forces it back on if you want thinking models to think.
+    this.noReasoning = /openrouter[.]ai/i.test(baseURL) && process.env.SOCIETY_OPENAI_REASONING !== "1";
   }
 
   async chat(req: ChatRequest): Promise<ChatResult> {
     // No cache_control: prefix caching on these providers is automatic or absent, never asked
     // for. The stable-prefix ordering still helps wherever it is automatic.
-    const res = await this.client.chat.completions.create({
+    // Reasoning tokens are billed against max_tokens, so a thinking model spends the whole
+    // budget deliberating and returns an empty or half-finished message. Observed: GLM 4.7
+    // burned 489 of its 500 tokens reasoning and said nothing at all. This is chat, not
+    // analysis - the same call the Anthropic side makes with effort: "low".
+    const params = {
       model: this.model,
       max_tokens: req.maxTokens,
       messages: [
-        { role: "system", content: req.system.map((b) => b.text).join("\n\n") },
-        { role: "user", content: req.user },
+        { role: "system" as const, content: req.system.map((b) => b.text).join("\n\n") },
+        { role: "user" as const, content: req.user },
       ],
       tools: toOpenAITools(req.tools),
-    });
-    return fromOpenAI(res);
+      ...(this.noReasoning ? { reasoning: { enabled: false } } : {}),
+    };
+    return fromOpenAI(await this.client.chat.completions.create(params as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming));
   }
 }
 

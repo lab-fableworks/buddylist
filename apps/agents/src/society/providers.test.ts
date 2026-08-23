@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type OpenAI from "openai";
-import { fromOpenAI, isCredentialOrCreditError, modelFor, resolveModel, stripReasoning, toOpenAITools, type ChatTool } from "./providers.js";
+import { fromOpenAI, isCredentialOrCreditError, modelFor, resolveModel, stripReasoning, toOpenAITools, trimToSentence, type ChatTool } from "./providers.js";
 import { loadRemotePrices, priceOf } from "./budget.js";
 
 const completion = (over: Record<string, unknown> = {}): OpenAI.Chat.Completions.ChatCompletion =>
@@ -125,6 +125,31 @@ describe("isCredentialOrCreditError", () => {
     expect(isCredentialOrCreditError({ status: 429 })).toBe(false);
     expect(isCredentialOrCreditError({ status: 500 })).toBe(false);
     expect(isCredentialOrCreditError(new Error("socket hang up"))).toBe(false);
+  });
+});
+
+describe("trimToSentence", () => {
+  it("cuts a reply that ran out of room back to its last finished sentence", () => {
+    // The real one: Marlowe posted "...you could hear a bit drop. Makes you" and stopped dead.
+    expect(trimToSentence("Between us, it is so quiet you could hear a bit drop. Makes you")).toBe("Between us, it is so quiet you could hear a bit drop.");
+    expect(trimToSentence("Really? Then who voted for it, exact")).toBe("Really?");
+    // Nothing to cut back to: a fragment beats an empty message.
+    expect(trimToSentence("no punctuation at all here")).toBe("no punctuation at all here");
+  });
+});
+
+describe("fromOpenAI truncation", () => {
+  const withFinish = (finish: string, content: string) =>
+    fromOpenAI({
+      id: "c", object: "chat.completion", created: 0, model: "m",
+      choices: [{ index: 0, finish_reason: finish, logprobs: null, message: { role: "assistant", content, refusal: null } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    } as unknown as OpenAI.Chat.Completions.ChatCompletion);
+
+  it("trims only when the model actually ran out of room", () => {
+    expect(withFinish("length", "One good line. And a half").text).toBe("One good line.");
+    // A normal stop may legitimately end without punctuation; leave it alone.
+    expect(withFinish("stop", "One good line. And a half").text).toBe("One good line. And a half");
   });
 });
 
