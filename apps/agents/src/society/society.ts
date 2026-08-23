@@ -11,7 +11,7 @@
 import WebSocket from "ws";
 import { BuddyList, type Message } from "@buddylist/sdk";
 import { CITIZENS, ROOM_PURPOSE, SOCIETY_ROOMS, type Citizen } from "./citizens.js";
-import { Brain, DEFAULT_MODEL, type TurnAction } from "./brain.js";
+import { Brain, DEFAULT_MODEL, type TurnAction, type TurnResult } from "./brain.js";
 import { Budget } from "./budget.js";
 import { EARNINGS, LEDGER_TYPES, RELATION_KINDS, World, replay, speechCost, type Relationship } from "./world.js";
 import { Outreach, outreachConfig } from "./outreach.js";
@@ -347,7 +347,7 @@ export class Society {
     const going = this.goingRate();
     for (const res of this.residents) {
       const me = res.citizen.screen_name;
-      if (!this.world.canAfford(me, going)) continue; // reaching out still costs them
+      if (!this.world.canAffordSpeech(me, going)) continue; // reaching out still costs them
       const reason = this.outreach.reasonFor(me, this.world);
       if (!reason) continue;
       const human = this.humans[0];
@@ -393,7 +393,7 @@ export class Society {
     // turn — that is the whole point of the currency, so the silence has to be real.
     const going = this.goingRate();
     const solvent = this.residents.filter(
-      (r) => this.world.canAfford(r.citizen.screen_name, going) && this.rhythms.presenceOf(r.citizen.screen_name).awake,
+      (r) => this.world.canAffordSpeech(r.citizen.screen_name, going) && this.rhythms.presenceOf(r.citizen.screen_name).awake,
     );
     if (solvent.length === 0) {
       if (this.residents.every((r) => !this.rhythms.presenceOf(r.citizen.screen_name).awake)) {
@@ -461,6 +461,8 @@ If what you want to say does not belong in this room, say something that does be
 
     let result = await ask(fullNudge);
     let cost = this.budget.record(result.usage);
+    const tokensOf = (u: TurnResult["usage"]) => u.input + u.output + u.cacheRead + u.cacheWrite;
+    let tokens = tokensOf(result.usage);
 
     // The narration guard. One rewrite, at the speaker's expense - both calls are charged, so
     // narrating costs double, which is the only incentive the prompt cannot already provide.
@@ -470,6 +472,7 @@ If what you want to say does not belong in this room, say something that does be
         `${fullNudge}\n\nSTOP. What you just wrote was narration — stage directions and prose, not chat. Rewrite it as what you would actually type into an IM window: no asterisks, no describing what you are doing or seeing, under 40 words. Say the thing itself.`,
       );
       cost += this.budget.record(retry.usage);
+      tokens += tokensOf(retry.usage);
       // Tool calls from the first attempt were real decisions (a vote, a tip); keep them unless
       // the rewrite made its own, so nothing is enacted twice.
       result = { ...retry, actions: retry.actions.length ? retry.actions : result.actions };
@@ -478,10 +481,13 @@ If what you want to say does not belong in this room, say something that does be
         log(`${me} narrated again; cut to "${result.say.slice(0, 60)}"`);
       }
     }
-    const bits = speechCost(cost);
-    this.world.charge(me, bits);
+    // Relief is applied here, not in speechCost: the going rate must stay the true price of a
+    // message, or one broke resident would drag everyone's affordability gate down with them.
+    const raw = speechCost(cost);
+    const receipt = this.world.chargeSpeech(me, raw, { tokens, usd: cost });
+    const bits = receipt.bits;
     this.lastSpeaker = me;
-    this.recentRates.push(bits);
+    this.recentRates.push(raw);
     if (this.recentRates.length > 20) this.recentRates.shift();
 
     if (result.refused) {
@@ -511,7 +517,7 @@ If what you want to say does not belong in this room, say something that does be
     if (result.say) {
       const sent = await res.bot.send(conversationId, result.say).catch(async () => res.bot.api("POST", `/rooms/${conversationId}/messages`, { body: result.say }).catch(() => null));
       if (sent) this.remember({ ...(sent as Message), sender: me, body: result.say } as Message);
-      log(`${me} [$${cost.toFixed(4)} / ${bits}b, has ${this.world.balance(me)}b]: ${result.say.slice(0, 80)}`);
+      log(`${me} [$${cost.toFixed(4)} / ${bits}b${bits < raw ? ` (relief from ${raw}b)` : ""} / ${tokens}tok, has ${this.world.balance(me)}b]: ${result.say.slice(0, 80)}`);
     }
 
     for (const a of result.actions) await this.enact(res, a).catch((e) => log(`${me} action ${a.name} failed:`, (e as Error).message));

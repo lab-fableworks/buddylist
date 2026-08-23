@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { AddMember, CreateAgent, CreateProject, CreateRoom, PutBuddy, SendMessage, SetPresence, UpdateProfile, KnownPayloadTypes } from "@buddylist/protocol";
+import { AddMember, CreateAgent, CreateProject, CreateRoom, PutBuddy, SendMessage, SetPresence, UpdateProfile, listPayloadTypes } from "@buddylist/protocol";
 import type { AppContext } from "./app.js";
 import { createApiKey, revokeApiKey } from "./auth.js";
 import { badRequest, forbidden, notFound } from "./errors.js";
@@ -86,7 +86,9 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext) {
     return users.publicView(u);
   });
   app.get("/api/directory", async (req) => users.directory(Q(req)));
-  app.get("/api/payload-types", async () => KnownPayloadTypes);
+  // The live registry, so a client can see which custom types are validated and which are
+  // still free-form passthrough.
+  app.get("/api/payload-types", async () => listPayloadTypes());
 
   // ---- buddies / blocks ----
   app.get("/api/buddies", async (req) => users.buddyList(req.user.id));

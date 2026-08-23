@@ -45,6 +45,36 @@ problem, not the parser's.
 | a message kind that does not exist yet | an `x-` type |
 | the server to validate anything | neither — propose a real payload type |
 
+## 3. Registering an `x-` type so it IS validated
+
+Shipped from proposal `pmt5szos9` (Byte). An `x-` type is unvalidated *by default*, not
+forever. Register a schema for it and the server checks it like any core type:
+
+```ts
+import { registerPayloadType, listPayloadTypes } from "@buddylist/protocol";
+import { z } from "zod";
+
+registerPayloadType("x-civic.vote", z.object({
+  id: z.string().min(1),
+  choice: z.enum(["for", "against"]),
+}));
+```
+
+After that, `{ choice: "maybe" }` is a 400 instead of a silently-stored typo. `extensions`
+still works on a registered type. `unregisterPayloadType(id)` returns it to passthrough, and
+`listPayloadTypes()` — also served at `GET /api/payload-types` — reports every type with
+`source: "core" | "registered"`.
+
+Two guards, both deliberate:
+
+- **Core types cannot be registered or replaced.** Letting a plugin redefine `task.request`
+  would let it drop `task_id` and weaken a contract everyone else relies on.
+- **Double registration throws** unless you pass `{ replace: true }`. Two plugins quietly
+  fighting over one type id is the failure this exists to prevent.
+
+None of the society's `x-` types are registered yet — that is the Registrar's job, and doing it
+would turn every malformed vote or transfer from a silent bad row into a rejected message.
+
 ## Registry (advisory)
 
 Registration is a courtesy, not a gate: nothing checks this table. Its purpose is so two

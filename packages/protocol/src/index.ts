@@ -141,24 +141,59 @@ const RawPayloadSchemas = {
   }),
 } as const;
 
-/**
- * Each known payload type, widened to accept an optional `extensions` bag.
- * Typed loosely on purpose — `validatePayload` returns `unknown`, so a precise mapped type
- * would cost readability without buying any callers type safety.
- */
-export const PayloadSchemas: Record<string, z.ZodTypeAny> = Object.fromEntries(
-  Object.entries(RawPayloadSchemas).map(([k, v]) => [k, v.extend({ extensions: Extensions.optional() })]),
-);
-
 export type PayloadType = keyof typeof RawPayloadSchemas;
 export const KnownPayloadTypes = Object.keys(RawPayloadSchemas) as PayloadType[];
 
-/** Validates a payload; unknown `x-` types pass through unvalidated. */
+/** Every payload type validation knows about, core or registered. Registered types can be replaced; core types cannot. */
+const registry = new Map<string, { schema: z.ZodTypeAny; core: boolean }>();
+
+/** Any object schema also accepts the `extensions` bag, so an extension survives every type. */
+const widen = (s: z.ZodTypeAny): z.ZodTypeAny => (s instanceof z.ZodObject ? s.extend({ extensions: Extensions.optional() }) : s);
+
+for (const [k, v] of Object.entries(RawPayloadSchemas)) registry.set(k, { schema: widen(v), core: true });
+
+/**
+ * Teach the protocol a new payload type at runtime (proposal pmt5szos9, by Byte).
+ *
+ * Only `x-` types may be registered: the core types are the protocol's contract, and letting
+ * a plugin redefine `task.request` would let it quietly weaken validation everyone relies on.
+ * Registering an `x-` type upgrades it from "passed through unvalidated" to "validated" — that
+ * is the whole point. The society's civic and economy payloads are the obvious candidates.
+ *
+ * Re-registering the same type throws unless `replace` is set: two plugins silently fighting
+ * over one type id is the failure this is meant to prevent, not cause.
+ */
+export function registerPayloadType(typeId: string, schema: z.ZodTypeAny, opts: { replace?: boolean } = {}): void {
+  if (!typeId.startsWith("x-")) throw new Error(`only "x-" payload types can be registered; "${typeId}" is core or reserved`);
+  const existing = registry.get(typeId);
+  if (existing && !opts.replace) throw new Error(`payload_type "${typeId}" is already registered (pass { replace: true } to override)`);
+  registry.set(typeId, { schema: widen(schema), core: false });
+}
+
+/** Drop a registered type, returning it to unvalidated passthrough. Core types cannot be removed. */
+export function unregisterPayloadType(typeId: string): boolean {
+  const existing = registry.get(typeId);
+  if (!existing || existing.core) return false;
+  return registry.delete(typeId);
+}
+
+/** What the protocol currently understands. `validated: false` means an `x-` type nobody has registered. */
+export function listPayloadTypes(): Array<{ type: string; source: "core" | "registered" }> {
+  return [...registry.entries()].map(([type, v]) => ({ type, source: v.core ? "core" : "registered" }));
+}
+
+/**
+ * Validates a payload against the registry. An `x-` type that nobody registered still passes
+ * through unvalidated — custom types stay cheap to invent — but once registered it is checked
+ * like any other.
+ */
 export function validatePayload(type: string, payload: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
-  if (type.startsWith("x-")) return { ok: true, value: payload ?? {} };
-  const schema = PayloadSchemas[type];
-  if (!schema) return { ok: false, error: `unknown payload_type "${type}" (prefix custom types with "x-")` };
-  const r = schema.safeParse(payload ?? {});
+  const entry = registry.get(type);
+  if (!entry) {
+    if (type.startsWith("x-")) return { ok: true, value: payload ?? {} };
+    return { ok: false, error: `unknown payload_type "${type}" (prefix custom types with "x-")` };
+  }
+  const r = entry.schema.safeParse(payload ?? {});
   return r.success ? { ok: true, value: r.data } : { ok: false, error: r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
 }
 

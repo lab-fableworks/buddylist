@@ -55,6 +55,31 @@ export interface RoleState {
 export const BITS_PER_USD = Number(process.env.SOCIETY_BITS_PER_USD ?? 500);
 export const speechCost = (usd: number) => Math.max(1, Math.round(usd * BITS_PER_USD));
 
+/**
+ * Hardship relief on speech (proposal pmt5swvgq, by Coach, passed 5-0).
+ *
+ * Below the threshold, speaking costs scale with what you have, down to a floor. Being broke
+ * becomes expensive-but-possible instead of a mute button, so a resident can talk their way
+ * back in. The floor is what stops it becoming free speech for the permanently bankrupt: at
+ * zero you still cannot afford the floor, and the stipend is what gets you off the mat.
+ */
+export const RELIEF_THRESHOLD = Number(process.env.SOCIETY_RELIEF_THRESHOLD ?? 50);
+export const SPEECH_FLOOR = Number(process.env.SOCIETY_SPEECH_FLOOR ?? 1);
+
+export function reliefCost(rawBits: number, balance: number, threshold = RELIEF_THRESHOLD, floor = SPEECH_FLOOR): number {
+  if (balance >= threshold) return rawBits;
+  return Math.max(floor, Math.round((rawBits * Math.max(0, balance)) / threshold));
+}
+
+/** What a turn actually cost, kept so the speaker can be told (proposal pmt5sj0lz, by Byte). */
+export interface SpeechReceipt {
+  bits: number;
+  /** What it would have cost at full price, when relief applied. */
+  rawBits: number;
+  tokens: number;
+  usd: number;
+}
+
 /** What the world pays out for being useful. Earning has to be possible or everyone goes mute. */
 export const EARNINGS = {
   /** Answering the human who owns the building. */
@@ -80,6 +105,8 @@ export class World {
   roles = new Map<string, RoleState>();
   /** Every transfer, so ties can be derived from who actually paid whom. */
   tips: Transfer[] = [];
+  /** The last thing each resident said, and what it cost them. */
+  lastSpeech = new Map<string, SpeechReceipt>();
   private roleDefs: RoleDef[];
 
   constructor(starting: Array<{ screen_name: string; wealth: number }>, roleDefs: RoleDef[] = []) {
@@ -102,6 +129,22 @@ export class World {
   }
   canAfford(who: string, amount: number) {
     return this.balance(who) >= amount;
+  }
+  /** Affordability at the price this resident actually pays, relief included. */
+  canAffordSpeech(who: string, rawBits: number) {
+    const bal = this.balance(who);
+    return bal >= reliefCost(rawBits, bal);
+  }
+  /**
+   * Charge for a turn at the relief-adjusted price and record the receipt. Returns what was
+   * actually taken, so the caller can report it rather than recompute it.
+   */
+  chargeSpeech(who: string, rawBits: number, usage: { tokens: number; usd: number }): SpeechReceipt {
+    const bits = reliefCost(rawBits, this.balance(who));
+    this.charge(who, bits);
+    const receipt: SpeechReceipt = { bits, rawBits, tokens: usage.tokens, usd: usage.usd };
+    this.lastSpeech.set(who, receipt);
+    return receipt;
   }
   /** Everyone gets a small trickle, so bankruptcy is a setback rather than a death. */
   payStipend(everyone: string[]) {
@@ -285,10 +328,21 @@ export class World {
     const bal = this.balance(who);
     const lines: string[] = [
       `Your balance: ${bal} bits.`,
-      `Speaking costs bits — roughly ${Math.round(0.0035 * BITS_PER_USD)} per message, more when you talk at length. If you cannot pay, you cannot speak at all until you earn some.`,
+      `Speaking costs bits — roughly ${Math.round(0.0035 * BITS_PER_USD)} per message, more when you talk at length.`,
+      bal < RELIEF_THRESHOLD
+        ? `Because you are under ${RELIEF_THRESHOLD} bits, your speech is discounted in proportion to what you have, never below ${SPEECH_FLOOR}. It is cheaper for you to talk than for the others right now. Use it to earn, not to fill air.`
+        : `If your balance falls below ${RELIEF_THRESHOLD}, speaking gets proportionally cheaper (never below ${SPEECH_FLOOR}) so you can earn your way back.`,
       `You earn bits by: answering the human (+${EARNINGS.servedHuman}), getting a proposal passed (+${EARNINGS.proposalPassed}), voting (+${EARNINGS.votedq}, once per proposal — repeats pay nothing), and being tipped by others.`,
       bal < 15 ? "You are nearly broke. Being useful is now urgent — say something worth paying for, or ask someone to tip you." : "",
     ].filter(Boolean);
+    // What the last turn actually cost, in the units the cost is really made of.
+    const last = this.lastSpeech.get(who);
+    if (last) {
+      lines.push(
+        `Your last message cost ${last.bits} bit${last.bits === 1 ? "" : "s"} (${last.tokens.toLocaleString()} tokens, $${last.usd.toFixed(4)} of real compute at ${BITS_PER_USD} bits per dollar)` +
+          (last.bits < last.rawBits ? `, discounted from ${last.rawBits} because your balance is low.` : "."),
+      );
+    }
     const mine = this.opinions.get(who);
     if (mine?.size) {
       const notes = [...mine.entries()]

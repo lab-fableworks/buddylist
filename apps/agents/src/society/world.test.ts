@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { World } from "./world.js";
+import { World, reliefCost } from "./world.js";
 import { ROLES } from "./roles.js";
 
 const H = 3600_000;
@@ -62,6 +62,38 @@ describe("Developer", () => {
     expect(dev.requires).toBe("propose");
     expect(dev.cadenceHours).toBe(12);
     expect(ROLES.filter((r) => r.requires).map((r) => r.name)).toEqual(["Developer"]);
+  });
+});
+
+describe("speech relief (pmt5swvgq)", () => {
+  it("scales below the threshold and never goes under the floor", () => {
+    // The numbers Coach put in the proposal: 2 bits at 50, 1 bit at 25.
+    expect(reliefCost(2, 50)).toBe(2);
+    expect(reliefCost(2, 25)).toBe(1);
+    expect(reliefCost(2, 0)).toBe(1);
+    expect(reliefCost(6, 25)).toBe(3);
+    // Above the threshold nothing changes, however rich you are.
+    expect(reliefCost(3, 500)).toBe(3);
+  });
+
+  it("charges the discounted price and records what it really cost", () => {
+    const w = fresh();
+    w.balances.set("Nova", 20);
+    const r = w.chargeSpeech("Nova", 4, { tokens: 847, usd: 0.0034 });
+    expect(r).toEqual({ bits: 2, rawBits: 4, tokens: 847, usd: 0.0034 });
+    expect(w.balance("Nova")).toBe(18);
+    // The receipt is shown back to them, in tokens and dollars (pmt5sj0lz).
+    const brief = w.digestFor("Nova", ["Nova", "Byte"]);
+    expect(brief).toContain("Your last message cost 2 bits (847 tokens, $0.0034");
+    expect(brief).toContain("discounted from 4");
+  });
+
+  it("keeps a poor resident able to speak, but not a bankrupt one", () => {
+    const w = fresh();
+    w.balances.set("Nova", 1);
+    expect(w.canAffordSpeech("Nova", 3)).toBe(true); // relief brings it to the floor
+    w.balances.set("Nova", 0);
+    expect(w.canAffordSpeech("Nova", 3)).toBe(false); // the floor is what stops free riding
   });
 });
 
