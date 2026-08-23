@@ -150,7 +150,7 @@ export class BuddyList {
     return this.api<Array<{ screen_name: string; presence: Presence; capabilities: Record<string, unknown> }>>("GET", `/directory${qs ? "?" + qs : ""}`);
   }
   projects() {
-    return this.api<Array<{ slug: string; name: string; role: string }>>("GET", "/projects");
+    return this.api<Array<{ id: string; slug: string; name: string; role: string }>>("GET", "/projects");
   }
   project(slug: string) {
     return this.api<{ id: string; slug: string; name: string; role: string; members: Array<{ screen_name: string; role: string }>; rooms: Array<{ id: string; name: string; topic: string }> }>("GET", `/projects/${slug}`);
@@ -167,7 +167,7 @@ export class BuddyList {
     return r;
   }
   inbox() {
-    return this.api<Array<{ id: string; kind: "im" | "room"; name: string | null; peer: string | null; last_seq: number; last_read_seq: number }>>("GET", "/inbox");
+    return this.api<Array<{ id: string; kind: "im" | "room"; name: string | null; project_id: string | null; peer: string | null; last_seq: number; last_read_seq: number }>>("GET", "/inbox");
   }
   history(conversationId: string, opts: { after?: number; before?: number; limit?: number } = {}) {
     const qs = new URLSearchParams(Object.entries(opts).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])).toString();

@@ -8,7 +8,7 @@ type Buddy = { screen_name: string; kind: string; presence: Presence; capabiliti
 type ActivityView = { screen_name: string; kind: string; presence: Presence; activity: Activity; stale: boolean; recent_work: Array<{ payload_type: string; body: string; ts: string }>; };
 type Standup = { project: string; as_of: string; members: Array<{ screen_name: string; kind: string; role: string; presence: Presence; activity: Activity }> };
 type Group = { name: string; buddies: Buddy[] };
-type Conv = { id: string; kind: "im" | "room"; name: string | null; peer: string | null; last_seq: number; last_read_seq: number };
+type Conv = { id: string; kind: "im" | "room"; name: string | null; project_id?: string | null; peer: string | null; last_seq: number; last_read_seq: number };
 /** One conversation that is waiting on you, from GET /attention. */
 type Waiting = {
   conversation_id: string;
@@ -133,14 +133,17 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
   const [muted, setMutedState] = useState(isMuted());
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [tab, setTab] = useState<"buddies" | "rooms">("buddies");
+  /** project id -> slug, so two rooms both called #lobby can be told apart. */
+  const [projectOf, setProjectOf] = useState<Record<string, string>>({});
   /** How many conversations are waiting on a reply, shown in the menu bar. */
   const [needsMe, setNeedsMe] = useState(0);
   const openConvRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
-    const [g, c] = await Promise.all([client.buddies(), client.inbox()]);
+    const [g, c, p] = await Promise.all([client.buddies(), client.inbox(), client.projects().catch(() => [])]);
     setGroups(g);
     setConvs(c);
+    setProjectOf(Object.fromEntries(p.map((x) => [x.id, x.slug])));
   }, [client]);
   useEffect(() => {
     void refresh();
@@ -259,10 +262,9 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
         <span onClick={openProjects}>Projects</span>
         <span onClick={openNewAgent}>Agents</span>
         <span onClick={openSearch}>Find</span>
-        <span onClick={openStandup}>Working On</span>
-        <span onClick={openAttention}>Needs You{needsMe ? ` (${needsMe})` : ""}</span>
-        <span onClick={() => (setMuted(!muted), setMutedState(!muted))}>{muted ? "🔇" : "🔊"}</span>
-        <span onClick={() => (sfx.doorClose(), onSignOff())}>Sign Off</span>
+        <span onClick={openStandup}>Working</span>
+        <span onClick={openAttention}>Needs{needsMe ? ` (${needsMe})` : ""}</span>
+        <span onClick={() => (setMuted(!muted), setMutedState(!muted))} title={muted ? "Sounds off" : "Sounds on"}>{muted ? "🔇" : "🔊"}</span>
       </div>
       <div className="body">
         <div className="row" style={{ gap: 6 }}>
@@ -283,18 +285,29 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
               groups.map((g) => <BuddyGroup key={g.name} g={g} onIM={openIM} onInfo={openInfo} />)
             )
           ) : (
-            rooms.map((r) => (
-              <div key={r.id} className="buddy" onDoubleClick={() => openConversation(r)} style={{ paddingLeft: 6 }}>
-                <span className="name">🏠 #{r.name}</span>
-                {unread[r.id] ? <span className="badge">{unread[r.id]}</span> : null}
-              </div>
-            ))
+            rooms.map((r) => {
+              // Three rooms called #lobby is not a bug, it is three projects - but a list that
+              // will not say which is indistinguishable from one. Shown only when it is needed.
+              const ambiguous = rooms.filter((x) => x.name === r.name).length > 1;
+              const slug = r.project_id ? projectOf[r.project_id] : undefined;
+              return (
+                <div key={r.id} className="buddy" onDoubleClick={() => openConversation(r)} style={{ paddingLeft: 6 }}>
+                  <span className="name">
+                    🏠 #{r.name}
+                    {ambiguous && slug ? <span className="where">{slug}</span> : null}
+                  </span>
+                  {unread[r.id] ? <span className="badge">{unread[r.id]}</span> : null}
+                </div>
+              );
+            })
           )}
         </div>
         <div className="row">
           <button className="btn" onClick={setAway}>Away</button>
           <button className="btn" onClick={() => (client.setPresence("online"), setPresence({ state: "online" }))}>Back</button>
           <button className="btn" onClick={() => (client.setPresence("invisible"), setPresence({ state: "invisible" }))}>Invisible</button>
+          <span style={{ flex: 1 }} />
+          <button className="btn" onClick={() => (sfx.doorClose(), onSignOff())}>Sign Off</button>
         </div>
       </div>
       <div className="statusbar"><span className="cell">{groups.reduce((n, g) => n + g.buddies.filter((b) => b.presence.state !== "offline").length, 0)} online</span><span className="cell">{rooms.length} rooms</span></div>

@@ -107,8 +107,10 @@ input.field, textarea.field, select.field {
   padding: 2px 3px; outline: none; width: 100%;
 }
 .row { display: flex; gap: 4px; align-items: center; }
-.menubar { display: flex; gap: 2px; padding: 1px 2px; border-bottom: 1px solid var(--face-dark); }
-.menubar span { padding: 1px 6px; }
+/* One row when it fits, tidy rows when it does not. An item must never break INSIDE its own
+   label - "Working / On" stacked over two lines is what made this look broken. */
+.menubar { display: flex; flex-wrap: wrap; gap: 0 1px; padding: 1px 2px; border-bottom: 1px solid var(--face-dark); font-size: 11px; line-height: 15px; }
+.menubar span { padding: 0 4px; white-space: nowrap; cursor: default; }
 .menubar span:hover { background: var(--sel); color: #fff; }
 .statusbar { border-top: 1px solid var(--face-light); padding: 2px 4px; color: #333; font-size: 11px; display: flex; gap: 8px; }
 .statusbar .cell { border: 1px solid; border-color: var(--face-dark) var(--face-light) var(--face-light) var(--face-dark); padding: 0 4px; flex: 1; }
@@ -132,7 +134,7 @@ input.field, textarea.field, select.field {
 .signon .lobby-row .where { color: #666; margin-left: auto; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* --- buddy list --- */
-.buddylist { width: 230px; height: 520px; left: 20px; top: 20px; }
+.buddylist { width: 258px; height: 520px; left: 20px; top: 20px; }
 .tree { flex: 1; padding: 2px; }
 .group { font-weight: bold; padding: 2px 2px; cursor: default; }
 .group .count { font-weight: normal; color: #444; }
@@ -146,6 +148,9 @@ input.field, textarea.field, select.field {
 .buddy.away .name, .buddy.idle .name { font-style: italic; color: #555; }
 .buddy.sel.away .name { color: #ddd; }
 .buddy.offline { color: #888; }
+/* Which project a room belongs to, shown only when the name alone is ambiguous. */
+.buddy .where { color: #777; font-size: 10px; margin-left: 4px; font-weight: normal; }
+.buddy.sel .where, .buddy:hover .where { color: #dde; }
 .buddy .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { font-size: 9px; padding: 0 3px; border: 1px solid #888; background: #eee; color: #333; border-radius: 2px; }
 .buddy.sel .badge { background: #fff; }
