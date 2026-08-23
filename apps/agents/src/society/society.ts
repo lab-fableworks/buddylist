@@ -671,7 +671,20 @@ If what you want to say does not belong in this room, say something that does be
     }
 
     if (result.say) {
-      const sent = await res.bot.send(conversationId, result.say).catch(async () => res.bot.api("POST", `/rooms/${conversationId}/messages`, { body: result.say }).catch(() => null));
+      // What this message cost, carried on the message itself.
+      //
+      // Speech is the largest flow of bits in this economy and none of it was written down:
+      // the log had grants and transfers only, so the books could not be reconciled and the
+      // Auditor was being asked to check figures that were never recorded. It rides in the
+      // `extensions` bag Byte proposed - no extra messages, and every charge sits on the thing
+      // that incurred it. `balance` is the balance AFTER, which makes the run self-checking:
+      // a reader can add the deltas and see whether the totals agree.
+      const spend = {
+        extensions: { v: 1, bits: -receipt.bits, list_bits: raw, tokens, usd: Number(cost.toFixed(6)), balance: this.world.balance(me), model: res.brain.model },
+      };
+      const sent = await res.bot
+        .send(conversationId, { body: result.say, payload_type: "text", payload: spend })
+        .catch(async () => res.bot.api("POST", `/rooms/${conversationId}/messages`, { body: result.say, payload_type: "text", payload: spend }).catch(() => null));
       if (sent) this.remember({ ...(sent as Message), sender: me, body: result.say } as Message);
       log(`${me} [$${cost.toFixed(4)} / ${bits}b${bits < raw ? ` (relief from ${raw}b)` : ""} / ${tokens}tok, has ${this.world.balance(me)}b]: ${result.say.slice(0, 80)}`);
     }
