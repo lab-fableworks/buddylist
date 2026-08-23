@@ -17,7 +17,7 @@ import { Budget, loadRemotePrices } from "./budget.js";
 import { EARNINGS, LEDGER_TYPES, RELATION_KINDS, World, replay, speechCost, type Relationship } from "./world.js";
 import { Outreach, outreachConfig } from "./outreach.js";
 import { Rhythms, crowdFactor, hoursOf, traitsOf } from "./rhythm.js";
-import { deNarrate, looksNarrated, narrationShare, promisesProposal, wordCount } from "./style.js";
+import { deNarrate, looksNarrated, narrationShare, promisesProposal, stripSelfPrefix, wordCount } from "./style.js";
 import { ROLES, STALE_PROPOSAL_HOURS } from "./roles.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
@@ -337,15 +337,36 @@ export class Society {
       }
     }
     // A proposal has sat under quorum too long and someone is the Whip.
+    //
+    // The guard used to be per proposal, so with nineteen stale at once the Whip was handed the
+    // floor nineteen times in a row - Raven filed nine reports, two of them fourteen seconds
+    // apart, each one a paid-for model call. One duty is one turn: name the whole backlog once.
+    const whipDef = this.world.roleDef("Whip");
     const whip = awakeHolder("Whip");
-    if (whip) {
+    if (whip && whipDef && Date.now() - (this.dutyAttempt.get("Whip") ?? 0) > whipDef.cadenceHours * 3600_000) {
       const stale = this.world
         .staleProposals(this.residents.length, STALE_PROPOSAL_HOURS)
-        .find((p) => Date.now() - (this.whipped.get(p.id) ?? 0) > 6 * 3600_000);
-      if (stale) {
-        this.whipped.set(stale.id, Date.now());
-        const absent = this.residents.map((r) => r.citizen.screen_name).filter((n) => !stale.votes[n] && n !== whip.citizen.screen_name);
-        return duty(whip, "Whip", "proposals", `[${stale.id}] "${stale.title}" has been open ${Math.round((Date.now() - stale.at) / 3600_000)} hours and cannot be decided yet. Not voted: ${absent.join(", ")}. Name them and tell them to vote — or to say why they will not.`);
+        .filter((p) => Date.now() - (this.whipped.get(p.id) ?? 0) > 6 * 3600_000);
+      if (stale.length) {
+        for (const p of stale) this.whipped.set(p.id, Date.now());
+        const everyone = this.residents.map((r) => r.citizen.screen_name);
+        const lines = stale.slice(0, 6).map((p) => {
+          const absent = everyone.filter((n) => !p.votes[n] && n !== whip.citizen.screen_name);
+          return `  [${p.id}] "${p.title.slice(0, 60)}" - open ${Math.round((Date.now() - p.at) / 3600_000)}h, still needs: ${absent.join(", ") || "nobody"}`;
+        });
+        return duty(
+          whip,
+          "Whip",
+          "proposals",
+          [
+            `${stale.length} proposal${stale.length === 1 ? " has" : "s have"} sat too long without enough votes to decide.`,
+            ...lines,
+            stale.length > 6 ? `  ...and ${stale.length - 6} more.` : "",
+            "Name the people, not just the proposals, and tell them to vote or say why they will not. One report covers all of it.",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        );
       }
     }
     // Periodic duties, oldest overdue first.
@@ -552,6 +573,10 @@ If what you want to say does not belong in this room, say something that does be
         log(`${me} narrated again; cut to "${result.say.slice(0, 60)}"`);
       }
     }
+    // The transcript is formatted "Name: text" and some models copy that into their reply,
+    // which arrives as "Marlowe: Marlowe: ...". Done after the rewrite so both attempts are clean.
+    if (result.say) result.say = stripSelfPrefix(result.say, me);
+
     // Relief is applied here, not in speechCost: the going rate must stay the true price of a
     // message, or one broke resident would drag everyone's affordability gate down with them.
     const raw = speechCost(cost);

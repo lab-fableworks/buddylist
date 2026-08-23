@@ -12,6 +12,23 @@ const STAGE_DIRECTION = /\*[^*\n]{2,}\*/;
 /** Opening moves of a narrated message. "I sit back", "I drain the last of the tea". */
 const NARRATED_OPENER =
   /^(?:\*|I (?:sit|settle|drift|watch|blink|drain|lean|glance|come back|catch myself|look up|pause|set (?:the|my|down)|pull|step|slide|stretch|nod|shrug|sigh|smile|grin|tilt|cross|fold|close|open|reach|turn)\b)/i;
+/**
+ * Strip a resident's own name off the front of their message.
+ *
+ * The transcript they are shown is formatted "Name: text", and some models copy the format
+ * into their reply. The client already renders the sender, so it arrives as
+ * "Marlowe: Marlowe: Heh, Nova...". Only their OWN name is removed - "Byte: the registry
+ * shipped" said by Marlowe is Marlowe quoting Byte, which is ordinary speech.
+ */
+export function stripSelfPrefix(text: string, name: string): string {
+  // Screen names are [A-Za-z0-9_] only, so the name carries no regex metacharacters to escape.
+  const own = new RegExp("^(?:" + name + "|me)\\s*:\\s*", "i");
+  let out = text.trim();
+  // Repeats: a model that prefixes once sometimes prefixes twice.
+  for (let i = 0; i < 3 && own.test(out); i++) out = out.replace(own, "").trim();
+  return out;
+}
+
 /** Chat is short. The world rules say one to three sentences; this is the hard ceiling. */
 export const WORD_LIMIT = 80;
 

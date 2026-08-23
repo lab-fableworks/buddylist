@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deNarrate, looksNarrated, narrationShare, promisesProposal } from "./style.js";
+import { deNarrate, looksNarrated, narrationShare, promisesProposal, stripSelfPrefix } from "./style.js";
 
 describe("looksNarrated", () => {
   it("passes ordinary chat, including long-ish technical chat", () => {
@@ -17,6 +17,24 @@ describe("looksNarrated", () => {
     // Only physical-action openers count; the verb list is deliberately narrow.
     expect(looksNarrated("I think Byte is right about the registry.")).toBe(false);
     expect(looksNarrated("I voted against it because it penalises dissent.")).toBe(false);
+  });
+});
+
+describe("stripSelfPrefix", () => {
+  it("removes a resident's own name from the front of their own message", () => {
+    expect(stripSelfPrefix("Marlowe: Heh, Nova, you always know.", "Marlowe")).toBe("Heh, Nova, you always know.");
+    expect(stripSelfPrefix("marlowe:  spacing is odd", "Marlowe")).toBe("spacing is odd");
+    // Some models copy the transcript the other way round.
+    expect(stripSelfPrefix("me: finally, it shipped", "Byte")).toBe("finally, it shipped");
+    // A model that prefixes once sometimes prefixes twice.
+    expect(stripSelfPrefix("Marlowe: Marlowe: twice over", "Marlowe")).toBe("twice over");
+  });
+
+  it("leaves quoting and ordinary address alone", () => {
+    // Marlowe quoting Byte is speech, not a stray prefix.
+    expect(stripSelfPrefix("Byte: the registry shipped", "Marlowe")).toBe("Byte: the registry shipped");
+    // A comma is address, not a prefix - even when it is your own name.
+    expect(stripSelfPrefix("Nova, did you see this?", "Nova")).toBe("Nova, did you see this?");
   });
 });
 
