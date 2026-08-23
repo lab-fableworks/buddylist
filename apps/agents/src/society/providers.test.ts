@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import type OpenAI from "openai";
 import { fromOpenAI, modelFor, resolveModel, toOpenAITools, type ChatTool } from "./providers.js";
-import { priceOf } from "./budget.js";
+import { loadRemotePrices, priceOf } from "./budget.js";
 
 const completion = (over: Record<string, unknown> = {}): OpenAI.Chat.Completions.ChatCompletion =>
   ({
@@ -111,6 +111,30 @@ describe("fromOpenAI", () => {
     expect(fromOpenAI(completion({ choices: [{ index: 0, finish_reason: "content_filter", logprobs: null, message: { role: "assistant", content: "", refusal: null } }] })).refused).toBe(true);
     const empty = fromOpenAI(completion({ choices: [], usage: undefined }));
     expect(empty).toEqual({ text: "", calls: [], refused: false, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+  });
+});
+
+describe("loadRemotePrices", () => {
+  const catalogue = {
+    data: [
+      { id: "z-ai/glm-4.7-flash", pricing: { prompt: "0.00000006", completion: "0.0000004" } },
+      { id: "broken/model", pricing: { prompt: "not-a-number", completion: "0.1" } },
+    ],
+  };
+  const fakeFetch = (async () => ({ ok: true, json: async () => catalogue })) as unknown as typeof fetch;
+
+  it("converts per-token prices to per-million and skips unparseable ones", async () => {
+    expect(await loadRemotePrices("https://openrouter.ai/api/v1/", fakeFetch)).toBe(1);
+    expect(priceOf("z-ai/glm-4.7-flash")).toEqual({ input: 0.06, output: 0.4 });
+    expect(priceOf("broken/model")).toEqual({ input: 5, output: 25 });
+  });
+
+  it("lets an explicit env price override the gateway, and never lets a fetch failure pass silently", async () => {
+    process.env.SOCIETY_MODEL_PRICES = JSON.stringify({ "z-ai/glm-4.7-flash": { input: 9, output: 9 } });
+    expect(priceOf("z-ai/glm-4.7-flash")).toEqual({ input: 9, output: 9 });
+    delete process.env.SOCIETY_MODEL_PRICES;
+    const failing = (async () => ({ ok: false, status: 502 })) as unknown as typeof fetch;
+    await expect(loadRemotePrices("https://openrouter.ai/api/v1", failing)).rejects.toThrow(/502/);
   });
 });
 

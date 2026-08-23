@@ -43,8 +43,39 @@ function envPrices(): Record<string, { input: number; output: number }> {
  */
 const FALLBACK_PRICE = { input: 5, output: 25 };
 const warned = new Set<string>();
+
+/**
+ * Prices fetched from the gateway at boot.
+ *
+ * A hand-kept table of other vendors' prices is wrong the week after it is written, and a
+ * wrong price here is not cosmetic: bits are backed by real dollars, so it corrupts both the
+ * spend cap and what residents are charged to speak. OpenRouter publishes the live list, so
+ * ask it instead of remembering.
+ */
+const remote = new Map<string, { input: number; output: number }>();
+
+/** Load `{baseUrl}/models` into the price table. Returns how many models it priced. */
+export async function loadRemotePrices(baseUrl: string, fetchImpl: typeof fetch = fetch): Promise<number> {
+  const res = await fetchImpl(baseUrl.replace(/\/+$/, "") + "/models", { signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) throw new Error(`${res.status} fetching model prices`);
+  const body = (await res.json()) as { data?: Array<{ id?: string; pricing?: { prompt?: string; completion?: string } }> };
+  for (const m of body.data ?? []) {
+    // Published per token; the rest of this file works per million. Rounded because the
+    // conversion is not exact in binary floating point and 0.40000000000000008 is not a price.
+    const per = (v: string | undefined) => Math.round(Number(v) * 1e6 * 1e6) / 1e6;
+    const input = per(m.pricing?.prompt);
+    const output = per(m.pricing?.completion);
+    if (m.id && Number.isFinite(input) && Number.isFinite(output)) remote.set(m.id, { input, output });
+  }
+  return remote.size;
+}
+
+/**
+ * Order of authority: an explicit env price is a human decision and wins; then the built-in
+ * table for the models we ship on; then whatever the gateway says; then a pessimistic guess.
+ */
 export function priceOf(model: string): { input: number; output: number } {
-  const price = PRICES[model] ?? envPrices()[model];
+  const price = envPrices()[model] ?? PRICES[model] ?? remote.get(model);
   if (price) return price;
   if (!warned.has(model)) {
     warned.add(model);

@@ -13,7 +13,7 @@ import { BuddyList, type Message } from "@buddylist/sdk";
 import { CITIZENS, ROOM_PURPOSE, SOCIETY_ROOMS, type Citizen } from "./citizens.js";
 import { Brain, DEFAULT_MODEL, type TurnAction, type TurnResult } from "./brain.js";
 import { modelFor } from "./providers.js";
-import { Budget } from "./budget.js";
+import { Budget, loadRemotePrices } from "./budget.js";
 import { EARNINGS, LEDGER_TYPES, RELATION_KINDS, World, replay, speechCost, type Relationship } from "./world.js";
 import { Outreach, outreachConfig } from "./outreach.js";
 import { Rhythms, crowdFactor, hoursOf, traitsOf } from "./rhythm.js";
@@ -171,6 +171,16 @@ export class Society {
       log("humans present:", this.humans.join(", ") || "(none)");
     } catch {
       log("could not read project members; outreach disabled");
+    }
+
+    // Real prices for any non-Anthropic model, before anyone speaks and is charged for it.
+    const gateway = process.env.SOCIETY_OPENAI_BASE_URL;
+    if (gateway && this.residents.some((r) => r.model !== resolveDefault(this.model))) {
+      try {
+        log(`priced ${await loadRemotePrices(gateway)} models from ${gateway}`);
+      } catch (e) {
+        log(`could not fetch model prices (${(e as Error).message}); unpriced models bill at the top tier`);
+      }
     }
 
     this.listen();
