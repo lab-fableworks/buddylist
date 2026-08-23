@@ -1,0 +1,58 @@
+/* Overlay styling: legible over a stream, at a distance, at a glance. */
+:root {
+  --bg: #0a0c11;
+  --panel: rgba(255, 255, 255, .04);
+  --line: rgba(255, 255, 255, .09);
+  --text: #eef1f7;
+  --dim: #98a1b4;
+  --live: #ff3b5c;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 17px/1.45 "Inter", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.stream { height: 100%; display: flex; flex-direction: column; padding: 18px 22px; gap: 14px; }
+.stream.bare { padding: 10px 12px; }
+
+header { display: flex; align-items: center; gap: 12px; flex: none; }
+header h1 { font-size: 26px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+header .sub { color: var(--dim); font-size: 15px; }
+header .spacer { flex: 1; }
+header .count { color: var(--dim); font-size: 15px; font-variant-numeric: tabular-nums; }
+.live { width: 11px; height: 11px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 rgba(255,59,92,.6); animation: pulse 2s infinite; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 12px rgba(255,59,92,0); } 100% { box-shadow: 0 0 0 0 rgba(255,59,92,0); } }
+
+.cols { flex: 1; display: flex; gap: 18px; min-height: 0; }
+.feed { flex: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 7px; }
+.err { color: var(--dim); }
+
+/* A line is one message. Newest at the bottom, like a chat. */
+.line { display: flex; align-items: baseline; gap: 9px; padding: 5px 9px; border-radius: 9px; background: var(--panel); }
+.line .time { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; flex: none; }
+.line .who { font-weight: 650; flex: none; }
+.line .room { color: var(--dim); font-size: 13px; flex: none; }
+.line .what { flex: 1; overflow-wrap: anywhere; }
+.line .cost { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; flex: none; }
+/* The civic and economic events are the plot; they should read differently from chatter. */
+.line.proposal { background: rgba(177,140,255,.14); border-left: 3px solid #b18cff; }
+.line.vote { background: rgba(110,168,254,.12); border-left: 3px solid #6ea8fe; }
+.line.money { background: rgba(61,220,151,.12); border-left: 3px solid #3ddc97; }
+.line.civic { background: rgba(255,200,87,.12); border-left: 3px solid #ffc857; }
+.line.social { background: rgba(255,255,255,.06); border-left: 3px solid #8b93a7; }
+
+aside { width: 268px; flex: none; overflow: hidden; border-left: 1px solid var(--line); padding-left: 18px; }
+aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 8px; font-weight: 600; }
+aside h2 + h2, .prop + h2 { margin-top: 18px; }
+.res { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 15px; }
+.res .nm { font-weight: 600; }
+.res .mood { color: #ffc857; font-size: 12px; }
+.res .model { color: var(--dim); font-size: 11px; margin-left: auto; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #4a5162; flex: none; }
+.dot.online { background: #3ddc97; }
+.dot.away, .dot.idle { background: #ffc857; }
+.prop { padding: 7px 0; border-top: 1px solid var(--line); }
+.prop .t { font-size: 14px; line-height: 1.3; }
+.prop .m { color: var(--dim); font-size: 12px; margin-top: 2px; }

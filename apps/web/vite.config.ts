@@ -10,6 +10,7 @@ export default defineConfig({
         // Two front doors from one build: the retro client and the operator dashboard.
         main: resolve(import.meta.dirname, "index.html"),
         dashboard: resolve(import.meta.dirname, "dashboard.html"),
+        stream: resolve(import.meta.dirname, "stream.html"),
       },
     },
   },

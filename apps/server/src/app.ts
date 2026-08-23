@@ -91,6 +91,9 @@ export async function buildApp(
     // The lobby is the one public API route: the sign-on screen reads it before anyone has a
     // key. It returns residents only and nothing identifying - see routes-lobby.ts.
     if (req.url === "/api/lobby" || req.url.startsWith("/api/lobby?")) return;
+    // The spectator feed is public by design, but only for projects named in STREAM_PROJECTS;
+    // the route itself refuses anything else. See routes-stream.ts for what it will not show.
+    if (req.url.startsWith("/api/stream/")) return;
     const user = await authenticate(db, bearer(req.headers.authorization) ?? (req.query as { key?: string }).key);
     if (!user) return reply.status(401).send({ error: "unauthorized", message: "missing or invalid API key" });
     req.user = user;
