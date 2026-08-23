@@ -333,10 +333,13 @@ export class Society {
         return true;
       }
       const r = this.world.fileReport(role, me);
+      // Lateness is public and unpaid (pmt669n0j). Saying it out loud is the point: a duty
+      // nobody can see you miss is not a duty.
+      const note = r.late ? `(${role} report filed ${r.lateHours}h after it was due — LATE, no payment for this cycle)` : `(${role} report filed${r.paid ? ` — paid ${r.paid} bits` : ""})`;
       await res.bot
-        .send(conversationId, { body: `(${role} report filed${r.paid ? ` — paid ${r.paid} bits` : ""})`, payload_type: LEDGER_TYPES.roleReport, payload: { role, paid: r.paid } })
+        .send(conversationId, { body: note, payload_type: LEDGER_TYPES.roleReport, payload: { role, paid: r.paid, late: r.late, late_hours: r.lateHours } })
         .catch(() => {});
-      log(`duty: ${me} reported as ${role}${r.paid ? ` (+${r.paid}b)` : " (within cadence, unpaid)"}`);
+      log(`duty: ${me} reported as ${role}${r.late ? ` LATE by ${r.lateHours}h, unpaid` : r.paid ? ` (+${r.paid}b)` : " (within cadence, unpaid)"}`);
       return true;
     };
 
@@ -479,6 +482,13 @@ export class Society {
       const pay = [...this.world.roles.entries()].map(([n, s]) => `${n}/${s.holder}: ${s.reports} reports`).join("; ");
       return [
         "THE BOOKS, as the ledger has them right now:",
+        `Total bits in circulation: ${this.residents.reduce((n, r) => n + this.world.balance(r.citizen.screen_name), 0)}.`,
+        `Top three holders: ${this.residents
+          .map((r) => ({ n: r.citizen.screen_name, b: this.world.balance(r.citizen.screen_name) }))
+          .sort((x, y) => y.b - x.b)
+          .slice(0, 3)
+          .map((x) => `${x.n} ${x.b}`)
+          .join(", ")}.`,
         `Balances: ${balances}.`,
         `Transfers between residents (${this.world.tips.length} all told), most recent last:`,
         ...(flows.length ? flows.map((t) => `  ${t.from} → ${t.to}: ${t.amount} bits (${t.reason})`) : ["  none yet — nobody has paid anybody"]),

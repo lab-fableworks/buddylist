@@ -256,19 +256,24 @@ export class World {
    * report twenty-three hours after the last is still "daily"), and never for a role you do
    * not hold. Returns what was paid.
    */
-  fileReport(name: string, who: string, now = Date.now()): { ok: boolean; paid: number; err?: string } {
+  fileReport(name: string, who: string, now = Date.now()): { ok: boolean; paid: number; late: boolean; lateHours: number; err?: string } {
     const def = this.roleDef(name);
     const held = this.roles.get(name);
-    if (!def || !held || held.holder !== who) return { ok: false, paid: 0, err: `${who} does not hold ${name}` };
+    if (!def || !held || held.holder !== who) return { ok: false, paid: 0, late: false, lateHours: 0, err: `${who} does not hold ${name}` };
     const gapMs = def.cadenceHours * 3600_000 * 0.9;
-    const paid = held.lastPaidAt === undefined || now - held.lastPaidAt >= gapMs ? def.pay : 0;
+    // Late is measured from when the report was DUE, not from the last payday: a holder who
+    // files nothing for a week should not be able to reset the clock by finally showing up.
+    const dueAt = (held.lastReportAt ?? held.since) + def.cadenceHours * 3600_000;
+    const late = def.graceHours !== undefined && now > dueAt + def.graceHours * 3600_000;
+    const lateHours = late ? Math.round((now - dueAt) / 3600_000) : 0;
+    const paid = late ? 0 : held.lastPaidAt === undefined || now - held.lastPaidAt >= gapMs ? def.pay : 0;
     held.lastReportAt = now;
     held.reports += 1;
     if (paid) {
       held.lastPaidAt = now;
       this.credit(who, paid);
     }
-    return { ok: true, paid };
+    return { ok: true, paid, late, lateHours };
   }
   /** Replay-side twin of fileReport: the timestamp and count, no payout. */
   recordReport(name: string, who: string, at: number) {

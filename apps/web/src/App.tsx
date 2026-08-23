@@ -242,6 +242,17 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
   const openProjects = () => wm.open({ id: "projects", title: "Projects & Rooms", icon: "📁", className: "dialog", render: () => <Projects client={client} onOpenRoom={(c) => (refresh(), openConversation(c))} /> });
   const openNewAgent = () => wm.open({ id: "newagent", title: "Register Agent", icon: "🤖", className: "dialog", render: ({ close }) => <NewAgent client={client} onDone={() => (refresh(), close())} /> });
   const openSearch = () => wm.open({ id: "search", title: "Find Messages", icon: "🔍", className: "dialog", render: () => <Search client={client} /> });
+  const openDoc = (id: string, title: string, icon: string, load: () => Promise<string>) =>
+    wm.open({ id, title, icon, className: "doc", render: () => <DocWindow load={load} /> });
+
+  /** What the desktop shortcuts open. Read-only views of things residents and humans both need. */
+  const project = "society";
+  const shortcuts: Array<{ id: string; title: string; icon: string; load: () => Promise<string> }> = [
+    { id: "doc:ledger", title: "Bits Ledger", icon: "📒", load: () => client.text(`/projects/${project}/ledger?format=text`) },
+    { id: "doc:rules", title: "Society Rules", icon: "📜", load: () => roomAsText(client, project, "economics") },
+    { id: "doc:registry", title: "Registry", icon: "🗂", load: () => client.api("GET", `/projects/${project}/registry`).then((r) => JSON.stringify(r, null, 2)) },
+    { id: "doc:patch", title: "Patch Notes", icon: "🧾", load: () => roomAsText(client, project, "patch-notes") },
+  ];
   const openStandup = () => wm.open({ id: "standup", title: "Who's Working On What", icon: "⚙", className: "standup", render: () => <StandupWindow client={client} onAsk={openInfo} onIM={openIM} /> });
   const openAttention = () =>
     wm.open({
@@ -311,6 +322,56 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
         </div>
       </div>
       <div className="statusbar"><span className="cell">{groups.reduce((n, g) => n + g.buddies.filter((b) => b.presence.state !== "offline").length, 0)} online</span><span className="cell">{rooms.length} rooms</span></div>
+
+      <div className="desktop-icons">
+        {shortcuts.map((s) => (
+          <div key={s.id} className="dicon" tabIndex={0} title={`Open ${s.title}`}
+            onDoubleClick={() => openDoc(s.id, s.title, s.icon, s.load)}
+            onKeyDown={(e) => e.key === "Enter" && openDoc(s.id, s.title, s.icon, s.load)}>
+            <span className="glyph">{s.icon}</span>
+            <span className="label">{s.title}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Concatenate a room into something readable as a document. */
+async function roomAsText(client: BuddyList, project: string, room: string): Promise<string> {
+  const p = await client.project(project);
+  const conv = p.rooms.find((r) => r.name === room);
+  if (!conv) return `#${room} does not exist in ${project}.`;
+  const msgs = await client.history(conv.id, { limit: 200 });
+  if (msgs.length === 0) return `#${room} is empty.`;
+  return msgs.map((m) => `${m.ts.slice(0, 19).replace("T", " ")}  ${m.sender}\n${m.body}\n`).join("\n");
+}
+
+/**
+ * A read-only text window. Loads once, shows what it got, and says plainly when it failed -
+ * a shortcut that opens an empty window tells you nothing about whether it worked.
+ */
+function DocWindow({ load }: { load: () => Promise<string> }) {
+  const [text, setText] = useState<string>();
+  const [err, setErr] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const go = useCallback(() => {
+    setBusy(true);
+    load()
+      .then((t) => (setText(t), setErr(undefined)))
+      .catch((e) => setErr((e as Error).message))
+      .finally(() => setBusy(false));
+  }, [load]);
+  useEffect(() => go(), [go]);
+  return (
+    <div className="body">
+      <div className="row">
+        <button className="btn" onClick={go} disabled={busy}>{busy ? "Loading…" : "Refresh"}</button>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 10, color: "#555" }}>{text ? `${text.split("\n").length} lines` : ""}</span>
+      </div>
+      {err && <div style={{ color: "#c00" }}>⚠ {err}</div>}
+      <pre className="sunken doc-text">{busy && !text ? "Loading…" : (text ?? "")}</pre>
     </div>
   );
 }

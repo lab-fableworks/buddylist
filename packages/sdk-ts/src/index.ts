@@ -139,6 +139,12 @@ export class BuddyList {
   draftReply(conversationId: string, hint?: string) {
     return this.api<{ draft: string; model: string; refused: boolean }>("POST", `/attention/${conversationId}/draft`, hint ? { hint } : {});
   }
+  /** Fetch an endpoint that answers in plain text rather than JSON. */
+  async text(path: string): Promise<string> {
+    const r = await fetch(this.opts.url.replace(/\/$/, "") + "/api" + path, { headers: { authorization: `Bearer ${this.opts.apiKey}` } });
+    if (!r.ok) throw new BuddyListError(r.status, "error", (await r.text().catch(() => "")).slice(0, 200) || r.statusText);
+    return r.text();
+  }
   buddies() {
     return this.api<Array<{ name: string; buddies: Array<{ screen_name: string; kind: string; presence: Presence; capabilities: Record<string, unknown> }> }>>("GET", "/buddies");
   }

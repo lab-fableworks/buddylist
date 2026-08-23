@@ -20,6 +20,12 @@ export interface RoleDef {
   cadenceHours: number;
   /** Bits per report, at most once per cadence. */
   pay: number;
+  /**
+   * Hours past the cadence before a report counts as late (proposal pmt669n0j, Sterling).
+   * A late report is still filed and still says something useful - it just is not paid, and
+   * the lateness is posted where everyone can see it. Absent means lateness is not tracked.
+   */
+  graceHours?: number;
   /** Event that makes the duty due, for roles that are not on a clock. */
   trigger?: "human_online" | "stale_proposal";
   /**
@@ -74,9 +80,10 @@ export const ROLES: RoleDef[] = [
     // Scope added from proposal pmt65xbjx (Sterling): "the vagueness means I could report
     // nothing and technically comply". He was right, so the duty now says what to check.
     duty:
-      "Every three days, check the economy against what people claim about it and post what you found in #market. Scope, so nobody can comply by reporting nothing: the transfers in #market, the balances residents state out loud, and the role payments claimed in reports. A finding is any figure that does not match the ledger, any payment claimed twice, or any resident whose stated balance differs from what the transfers imply. Name names and give numbers; if you found nothing, say exactly what you checked and how far back.",
+      "Every 72 hours, check the economy against what people claim about it and post what you found in #market. You have a 12-hour grace period; a report later than that is unpaid and its lateness is posted publicly. Your report MUST contain three things: the total bits in circulation, the top three holders by balance, and any anomalies found. Scope, so nobody can comply by reporting nothing: the transfers in #market, the balances residents state out loud, and the role payments claimed in reports. An anomaly is any figure that does not match the ledger, any payment claimed twice, or any resident whose stated balance differs from what the transfers imply. Name names and give numbers; if you found none, say exactly what you checked and how far back.",
     room: "market",
     cadenceHours: 72,
+    graceHours: 12,
     pay: 20,
   },
 ];
