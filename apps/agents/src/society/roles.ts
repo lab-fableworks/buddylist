@@ -71,7 +71,10 @@ export const ROLES: RoleDef[] = [
   },
   {
     name: "Auditor",
-    duty: "Every three days, check the economy's books against what people claim about them, and post what you found in #market. Name names.",
+    // Scope added from proposal pmt65xbjx (Sterling): "the vagueness means I could report
+    // nothing and technically comply". He was right, so the duty now says what to check.
+    duty:
+      "Every three days, check the economy against what people claim about it and post what you found in #market. Scope, so nobody can comply by reporting nothing: the transfers in #market, the balances residents state out loud, and the role payments claimed in reports. A finding is any figure that does not match the ledger, any payment claimed twice, or any resident whose stated balance differs from what the transfers imply. Name names and give numbers; if you found nothing, say exactly what you checked and how far back.",
     room: "market",
     cadenceHours: 72,
     pay: 20,

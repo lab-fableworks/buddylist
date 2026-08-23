@@ -48,7 +48,8 @@ const TOOLS: ChatTool[] = [
   },
   {
     name: "propose",
-    description: "Put a concrete proposal to the society. Use only for a real idea, not a passing remark. If it concerns the BuddyList software itself, set software=true and be specific enough that a developer could act on it.",
+    description:
+      "Put a concrete proposal to the society. Use only for a real idea, not a passing remark. Your briefing lists what is already on the record - check it first, because a duplicate costs you bits and gets voted down. If it concerns the BuddyList software itself, set software=true and be specific enough that a developer could act on it.",
     input_schema: {
       type: "object",
       properties: {

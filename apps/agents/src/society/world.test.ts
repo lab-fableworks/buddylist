@@ -97,6 +97,32 @@ describe("speech relief (pmt5swvgq)", () => {
   });
 });
 
+describe("what a resident sees before filing (pmt64jkds)", () => {
+  it("lists existing proposals with titles and authors, not bare ids", () => {
+    const w = fresh();
+    w.addProposal({ id: "pmt4qdpzx", author: "Byte", title: "Add seconds to message timestamps", detail: "", software: true, votes: {}, status: "passed", at: 1 });
+    w.addProposal({ id: "pmt5szos9", author: "Byte", title: "Extensible payload registry for protocol plugins", detail: "", software: true, votes: {}, status: "open", at: 2 });
+    w.shipped.add("pmt4qdpzx");
+    const brief = w.digestFor("Raven", ["Raven", "Byte"]);
+    // The old line was a row of opaque ids, which is why the same idea was filed three times.
+    expect(brief).toContain('[pmt4qdpzx] "Add seconds to message timestamps" - Byte, passed, SHIPPED');
+    expect(brief).toContain('[pmt5szos9] "Extensible payload registry for protocol plugins" - Byte, open');
+    expect(brief).toMatch(/read this before filing anything/);
+  });
+
+  it("shows the most recent first and caps both lists so the prompt cannot grow without bound", () => {
+    const w = fresh();
+    for (let i = 0; i < 12; i++) w.addProposal({ id: `p${i}`, author: "Nova", title: `Idea ${i}`, detail: "", software: false, votes: {}, status: "open", at: i });
+    const brief = w.digestFor("Raven", ["Raven", "Nova"]);
+    const record = brief.split("Already on the record")[1].split("Open proposals")[0];
+    expect(record).toContain('[p11] "Idea 11"');
+    expect(record).toContain('[p4] "Idea 4"');
+    expect(record).not.toContain('[p3] "Idea 3"');
+    // The voting list is capped too, and says how many it left out rather than hiding them.
+    expect(brief).toContain("(+4 more open)");
+  });
+});
+
 describe("ties", () => {
   it("derives relationships from votes and money, and carries declared ones", () => {
     const w = fresh();

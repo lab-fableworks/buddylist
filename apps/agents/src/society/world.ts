@@ -388,14 +388,30 @@ export class World {
       .sort((a, b) => Number(b.split(" ")[1]) - Number(a.split(" ")[1]))
       .slice(0, 3);
     lines.push(`Wealthiest right now: ${rich.join(", ")}.`);
-    const done = [...this.shipped];
-    if (done.length) lines.push(`Already built and shipped (do not ask for these again): ${done.join(", ")}.`);
+    // Proposal pmt64jkds (Nova): show recent proposals before someone files a new one. There
+    // is no submission form for a resident - the briefing IS the form - so it goes here. This
+    // used to be a row of bare ids, which is unreadable and is why the same idea was filed
+    // three times and the registry was transcribed wrong.
+    const recent = [...this.proposals.values()].sort((a, b) => b.at - a.at).slice(0, 8);
+    if (recent.length) {
+      lines.push(
+        "Already on the record - read this before filing anything. A duplicate costs you bits and wastes everyone's votes:\n" +
+          recent
+            .map((p) => `  [${p.id}] "${p.title.slice(0, 72)}" - ${p.author}, ${p.status}${this.shipped.has(p.id) ? ", SHIPPED" : ""}`)
+            .join("\n"),
+      );
+    }
     const open = this.openProposals();
     if (open.length) {
+      // Unvoted first, and capped: this list used to grow with every proposal ever filed, and
+      // it is in every prompt. What a resident can still act on is what belongs here.
+      const unvoted = open.filter((p) => !p.votes[who]);
+      const show = [...unvoted, ...open.filter((p) => p.votes[who])].slice(0, 8);
+      const more = open.length - show.length;
       lines.push(
-        `Open proposals you may vote on: ${open
+        `Open proposals you may vote on: ${show
           .map((p) => `[${p.id}] "${p.title}" by ${p.author} (${Object.keys(p.votes).length} votes so far${p.votes[who] ? ", you voted " + p.votes[who] : ", you have NOT voted"})`)
-          .join(" | ")}`,
+          .join(" | ")}${more > 0 ? ` (+${more} more open)` : ""}`,
       );
     }
     return lines.join("\n");

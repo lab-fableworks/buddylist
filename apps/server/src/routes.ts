@@ -10,6 +10,7 @@ import { registerActivityRoutes } from "./routes-activity.js";
 import { registerStatsRoutes } from "./routes-stats.js";
 import { registerAttentionRoutes } from "./routes-attention.js";
 import { registerLobbyRoutes } from "./routes-lobby.js";
+import { registerRegistryRoutes } from "./routes-registry.js";
 
 const parse = <T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> => {
   const r = schema.safeParse(body ?? {});
@@ -28,6 +29,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext) {
   registerStatsRoutes(app, ctx);
   registerAttentionRoutes(app, ctx);
   registerLobbyRoutes(app, ctx);
+  registerRegistryRoutes(app, ctx);
 
   // ---- me ----
   app.get("/api/me", async (req) => {
