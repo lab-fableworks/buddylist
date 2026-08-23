@@ -43,6 +43,8 @@ button, input, textarea, select { font: inherit; }
   flex-direction: column;
   min-width: 220px;
   min-height: 120px;
+  /* explicit sizes come from getBoundingClientRect, which includes the border */
+  box-sizing: border-box;
 }
 .win.active { z-index: 10; }
 .titlebar {
@@ -60,6 +62,22 @@ button, input, textarea, select { font: inherit; }
 }
 .win.active .titlebar { background: linear-gradient(90deg, var(--title-a), var(--title-b)); }
 .titlebar .title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+/* resize handles: invisible strips along each edge, squares at the corners, like any OS window */
+.rs { position: absolute; z-index: 2; touch-action: none; }
+.rs-n, .rs-s { left: 6px; right: 6px; height: 6px; }
+.rs-e, .rs-w { top: 6px; bottom: 6px; width: 6px; }
+.rs-n { top: -3px; cursor: ns-resize; }
+.rs-s { bottom: -3px; cursor: ns-resize; }
+.rs-e { right: -3px; cursor: ew-resize; }
+.rs-w { left: -3px; cursor: ew-resize; }
+.rs-ne, .rs-nw, .rs-se, .rs-sw { width: 12px; height: 12px; }
+.rs-ne { top: -3px; right: -3px; cursor: nesw-resize; }
+.rs-sw { bottom: -3px; left: -3px; cursor: nesw-resize; }
+.rs-nw { top: -3px; left: -3px; cursor: nwse-resize; }
+.rs-se { bottom: -3px; right: -3px; cursor: nwse-resize; }
+/* a maximized window is flush with the screen; no handles, no cascade offset */
+.win.maxed { border-radius: 0; }
 .titlebar .ico { width: 14px; text-align: center; }
 .tbtn {
   width: 16px; height: 14px; padding: 0; line-height: 11px; font-size: 10px; font-weight: bold;
