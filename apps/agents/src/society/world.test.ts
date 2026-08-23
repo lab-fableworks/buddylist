@@ -123,6 +123,31 @@ describe("what a resident sees before filing (pmt64jkds)", () => {
   });
 });
 
+describe("marriage", () => {
+  it("counts only when both sides name it", () => {
+    const w = fresh();
+    w.relate("Raven", "Coach", { kind: "spouse", note: "he notices the work" });
+    // One-sided is not a marriage, however sincerely meant.
+    expect(w.spouseOf("Raven")).toBeUndefined();
+    w.relate("Coach", "Raven", { kind: "spouse", note: "she sees through it" });
+    expect(w.spouseOf("Raven")).toBe("Coach");
+    expect(w.spouseOf("Coach")).toBe("Raven");
+    // An ally is not a spouse, however close.
+    w.relate("Byte", "Raven", { kind: "ally", note: "rigour" });
+    expect(w.spouseOf("Byte")).toBeUndefined();
+  });
+
+  it("tells both of them, with their spouse's balance, before anything else about people", () => {
+    const w = fresh();
+    w.balances.set("Coach", 518);
+    w.relate("Raven", "Coach", { kind: "spouse", note: "he notices the unglamorous work" });
+    w.relate("Coach", "Raven", { kind: "spouse", note: "she sees straight through it" });
+    const brief = w.digestFor("Raven", ["Raven", "Coach", "Byte"]);
+    expect(brief).toContain("You are married to Coach — he notices the unglamorous work");
+    expect(brief).toContain("They have 518 bits");
+  });
+});
+
 describe("ties", () => {
   it("derives relationships from votes and money, and carries declared ones", () => {
     const w = fresh();

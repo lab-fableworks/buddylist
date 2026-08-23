@@ -26,6 +26,10 @@ const resolveDefault = (spec: string) => spec.replace(/^oa:/, "");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const pick = <T>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
 
+/** Raven said this about Coach, unprompted, five times over. It is her reason, not mine. */
+const NOTE_A = "he notices the unglamorous work and says so to your face";
+const NOTE_B = "she sees straight through it and stays anyway";
+
 interface Resident {
   citizen: Citizen;
   bot: BuddyList;
@@ -180,6 +184,14 @@ export class Society {
         log(`could not fetch model prices (${(e as Error).message}); unpriced models bill at the top tier`);
       }
     }
+
+    // What each resident has already said to the human lives on their profile, not in memory:
+    // a deploy used to wipe it and re-arm every one-shot trigger.
+    for (const res of this.residents) {
+      const me = await res.bot.api<{ profile?: { outreach?: { lastDmAt?: number; used?: string[] } } }>("GET", "/me").catch(() => undefined);
+      this.outreach.hydrate(res.citizen.screen_name, me?.profile?.outreach);
+    }
+    await this.arrangeMarriages();
 
     this.listen();
     const pollHuman = async () => {
@@ -392,6 +404,53 @@ export class Society {
   }
 
   /**
+   * Marriages the operator has arranged, e.g. SOCIETY_MARRIAGES="Raven+Coach".
+   *
+   * Written as the residents themselves, in both directions, because a marriage named by only
+   * one person is not one - and because a relationship posted by the operator would replay as
+   * the operator's own. Idempotent: if the tie is already in the log, this does nothing, so a
+   * deploy does not remarry anybody.
+   */
+  private async arrangeMarriages() {
+    const spec = process.env.SOCIETY_MARRIAGES;
+    if (!spec) return;
+    for (const pair of spec.split(",").map((x) => x.trim()).filter(Boolean)) {
+      const [a, b] = pair.split("+").map((x) => x.trim());
+      const ra = this.residents.find((r) => r.citizen.screen_name === a);
+      const rb = this.residents.find((r) => r.citizen.screen_name === b);
+      if (!ra || !rb) {
+        log(`cannot marry ${pair}: both must be residents`);
+        continue;
+      }
+      if (this.world.spouseOf(a) === b) continue; // already married, restored from the log
+      const gossip = this.rooms.get("gossip");
+      const notes: Record<string, string> = {
+        [a]: NOTE_A,
+        [b]: NOTE_B,
+      };
+      for (const [one, two] of [
+        [ra, rb],
+        [rb, ra],
+      ] as Array<[Resident, Resident]>) {
+        const from = one.citizen.screen_name;
+        const to = two.citizen.screen_name;
+        const note = notes[from] ?? "";
+        this.world.relate(from, to, { kind: "spouse", note });
+        if (gossip)
+          await one.bot
+            .send(gossip, { body: `(${from} now calls ${to} their spouse — ${note})`, payload_type: LEDGER_TYPES.relationship, payload: { with: to, kind: "spouse", note } })
+            .catch(() => {});
+      }
+      log(`married ${a} and ${b}`);
+      const commons = this.rooms.get("commons");
+      if (commons)
+        await ra.bot
+          .send(commons, `${a} and ${b} are married. It is in the record now, both ways.`)
+          .catch(() => {});
+    }
+  }
+
+  /**
    * The record a duty is meant to be reported from, read fresh at the moment it is due.
    * Kept out of the ordinary briefing on purpose: this is bulky, and only the holder needs it.
    */
@@ -451,6 +510,7 @@ export class Society {
           `You are messaging ${human} directly, and you started this conversation. ${reason.nudge} Keep it short — this is a DM, not a speech.`,
         );
         this.outreach.record(me, reason.key, this.world);
+        void res.bot.updateProfile({ profile: { outreach: this.outreach.snapshot(me) } }).catch(() => {});
         log(`outreach: ${me} DM'd ${human} (${reason.key})`);
         return true;
       } catch (e) {

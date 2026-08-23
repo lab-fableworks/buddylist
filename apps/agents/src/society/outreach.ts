@@ -46,6 +46,28 @@ export class Outreach {
 
   constructor(private cfg: OutreachConfig) {}
 
+  /**
+   * Restore what a resident has already said, so a restart is not a fresh start.
+   *
+   * This lived only in memory, and every deploy wiped it. Raven told the human five separate
+   * times that she thought well of Coach - not because she was nagging, but because each
+   * restart re-armed a one-shot trigger. State that governs "have I already said this" has to
+   * outlive the process saying it.
+   */
+  hydrate(name: string, saved: { lastDmAt?: number; used?: string[] } | undefined) {
+    if (!saved) return;
+    const s = this.stateFor(name);
+    s.lastDmAt = Math.max(s.lastDmAt, Number(saved.lastDmAt ?? 0));
+    for (const k of saved.used ?? []) s.used.add(k);
+    this.lastAnyDmAt = Math.max(this.lastAnyDmAt, s.lastDmAt);
+  }
+
+  /** The part worth persisting, small enough to sit on a profile. */
+  snapshot(name: string): { lastDmAt: number; used: string[] } {
+    const s = this.stateFor(name);
+    return { lastDmAt: s.lastDmAt, used: [...s.used].slice(-40) };
+  }
+
   private stateFor(name: string): ResidentState {
     let s = this.state.get(name);
     if (!s) {

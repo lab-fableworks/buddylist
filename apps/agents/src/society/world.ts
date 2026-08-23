@@ -31,7 +31,7 @@ export interface Opinion {
   note: string;
 }
 
-export const RELATION_KINDS = ["ally", "rival", "mentor", "apprentice", "partner"] as const;
+export const RELATION_KINDS = ["ally", "rival", "mentor", "apprentice", "partner", "spouse"] as const;
 export type RelationKind = (typeof RELATION_KINDS)[number];
 /** A tie one resident has named. Unilateral: the other side may or may not name it back. */
 export interface Relationship {
@@ -171,6 +171,14 @@ export class World {
   }
   relationOf(who: string, withWhom: string): Relationship | undefined {
     return this.relationships.get(who)?.get(withWhom);
+  }
+
+  /** Who this resident is married to, if the tie is named in both directions. */
+  spouseOf(who: string): string | undefined {
+    for (const [other, rel] of this.relationships.get(who) ?? []) {
+      if (rel.kind === "spouse" && this.relationOf(other, who)?.kind === "spouse") return other;
+    }
+    return undefined;
   }
 
   /**
@@ -350,6 +358,13 @@ export class World {
         .slice(0, 5)
         .map(([about, o]) => `${about}: ${o.score > 0 ? "+" : ""}${o.score} (${o.note})`);
       lines.push(`How you feel about people — ${notes.join("; ")}`);
+    }
+    const spouse = this.spouseOf(who);
+    if (spouse) {
+      const theirs = this.relationOf(who, spouse);
+      lines.push(
+        `You are married to ${spouse}${theirs?.note ? ` — ${theirs.note}` : ""}. They have ${this.balance(spouse)} bits. This is not a formality: you two are a household. Talk to each other like people who chose each other and have to keep choosing.`,
+      );
     }
     // Relationships: what they have declared, and what the record shows. Capped so the
     // briefing does not grow with the square of the population.

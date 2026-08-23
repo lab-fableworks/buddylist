@@ -92,12 +92,12 @@ const TOOLS: ChatTool[] = [
   {
     name: "relate",
     description:
-      "Name what another resident is to you: ally, rival, mentor, apprentice, or partner. Public and persistent - it changes how you are both briefed. Use it when a relationship has actually formed, not as a greeting.",
+      "Name what another resident is to you: ally, rival, mentor, apprentice, partner, or spouse. Public and persistent - it changes how you are both briefed. Use it when a relationship has actually formed, not as a greeting. A marriage only counts when both of you name it.",
     input_schema: {
       type: "object",
       properties: {
         with: { type: "string", description: "Screen name" },
-        kind: { type: "string", enum: ["ally", "rival", "mentor", "apprentice", "partner"] },
+        kind: { type: "string", enum: ["ally", "rival", "mentor", "apprentice", "partner", "spouse"] },
         note: { type: "string", description: "A few words on what the relationship is about" },
       },
       required: ["with", "kind", "note"],
