@@ -89,6 +89,16 @@ export function registerAttentionRoutes(app: FastifyInstance, ctx: AppContext) {
       [me, String(days), name],
     );
 
+    // node-postgres returns BIGINT as a string; PGlite returns a number. Every comparison
+    // below is numeric, and "9" <= "10" is false as strings - so the production queue could
+    // mark things answered or unread wrongly while the tests, on PGlite, stayed green.
+    for (const r of rows) {
+      r.seq = Number(r.seq);
+      r.last_read_seq = Number(r.last_read_seq);
+      r.my_last = Number(r.my_last);
+      r.dismissed_through = Number(r.dismissed_through);
+    }
+
     const reasonOf = (r: Row): Reason | undefined => {
       // Built from a plain string, not a template literal: a template literal turns \b into
       // a backspace character rather than a word boundary, so the pattern matches nothing.
@@ -172,7 +182,9 @@ export function registerAttentionRoutes(app: FastifyInstance, ctx: AppContext) {
 
   /** Hide a conversation's items up to `seq`. Anything said after that comes back on its own. */
   app.post("/api/attention/dismiss", async (req) => {
-    const { conversation_id, seq } = parse(z.object({ conversation_id: z.string().uuid(), seq: z.number().int().min(0) }), req.body);
+    // coerce: the seq the client echoes back came from a BIGINT, which Postgres serialises as
+    // a string. Rejecting it here is how the Dismiss button silently did nothing in production.
+    const { conversation_id, seq } = parse(z.object({ conversation_id: z.string().uuid(), seq: z.coerce.number().int().min(0) }), req.body);
     const member = await db.one("SELECT 1 FROM conv_members WHERE conversation_id=$1 AND user_id=$2", [conversation_id, req.user.id]);
     if (!member) throw forbidden("not a member of this conversation");
     await db.query(

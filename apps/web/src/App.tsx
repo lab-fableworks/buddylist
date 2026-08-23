@@ -691,13 +691,23 @@ function AttentionWindow({ client, onOpen, onChange }: { client: BuddyList; onOp
 
   const items = data?.items ?? [];
 
+  // Failures surface in the window. A dismiss that 400s and says nothing is a button that
+  // "does not work" - which is exactly how this was reported.
   const dismiss = async (w: Waiting) => {
-    await client.api("POST", "/attention/dismiss", { conversation_id: w.conversation_id, seq: w.latest.seq });
-    void load();
+    try {
+      await client.api("POST", "/attention/dismiss", { conversation_id: w.conversation_id, seq: Number(w.latest.seq) });
+      void load();
+    } catch (e) {
+      setErr(`Dismiss failed: ${(e as Error).message}`);
+    }
   };
   const undismiss = async (w: Waiting) => {
-    await client.api("DELETE", `/attention/dismiss/${w.conversation_id}`);
-    void load();
+    try {
+      await client.api("DELETE", `/attention/dismiss/${w.conversation_id}`);
+      void load();
+    } catch (e) {
+      setErr(`Undo failed: ${(e as Error).message}`);
+    }
   };
   // Drafting never sends. The text lands in an editable box and only the Send button posts it.
   const draft = async (w: Waiting) => {

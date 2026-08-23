@@ -162,8 +162,12 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
   }, [live, load]);
 
   const dismiss = async (w: Attention["items"][number]) => {
-    await api("/attention/dismiss", apiKey, { method: "POST", body: { conversation_id: w.conversation_id, seq: w.latest.seq } });
-    void load();
+    try {
+      await api("/attention/dismiss", apiKey, { method: "POST", body: { conversation_id: w.conversation_id, seq: Number(w.latest.seq) } });
+      void load();
+    } catch (e) {
+      setErr(`Dismiss failed: ${(e as Error).message}`);
+    }
   };
   // Drafting never sends; the text is editable and only "Send as me" posts it.
   const draft = async (w: Attention["items"][number]) => {

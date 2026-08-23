@@ -158,6 +158,14 @@ describe("attention", () => {
     expect((await attention()).items.find((i: { conversation_id: string }) => i.conversation_id === room).triggers).toBe(2);
   });
 
+  it("accepts seq as the string Postgres hands the client", async () => {
+    // PGlite returns BIGINT as a number, so the fixture cannot reproduce the production shape
+    // by accident; send exactly what a browser on Postgres sends.
+    const r = await api(meKey, "POST", "/api/attention/dismiss", { conversation_id: imId, seq: "1" });
+    expect(r.status).toBe(200);
+    await api(meKey, "DELETE", `/api/attention/dismiss/${imId}`);
+  });
+
   it("refuses to dismiss a conversation you are not in", async () => {
     const priv = (await api(botKey, "GET", "/api/ims/Docker")).json.conversation_id;
     expect((await api(meKey, "POST", "/api/attention/dismiss", { conversation_id: priv, seq: 1 })).status).toBe(403);
