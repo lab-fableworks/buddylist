@@ -137,3 +137,24 @@ body {
   border-color: var(--face-dark) var(--face-light) var(--face-light) var(--face-dark);
   padding: 3px 10px; font-size: 13px;
 }
+
+/* --- the overlay must survive any viewport OBS or a browser throws at it --- */
+@media (max-width: 760px) {
+  /* A fixed 300px buddy list in a narrow window crushes the chat to nothing; drop it. */
+  .buddywin, .taskbar { display: none; }
+  .desk { padding: 8px; }
+  .wins { padding-bottom: 0; }
+}
+@media (max-height: 420px) {
+  .taskbar { display: none; }
+}
+
+/* --- failures are shown, never swallowed --- */
+.crash { max-width: 560px; margin: 60px auto; }
+.crashbody { padding: 12px 14px; font-size: 14px; }
+.crashbody pre { background: #fff; border: 1px solid var(--face-dark); padding: 8px; white-space: pre-wrap; font-size: 12px; }
+.errstrip {
+  position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 99;
+  background: #ffffe1; border: 1px solid #808000; color: #000;
+  font: 13px/1.4 "Tahoma", sans-serif; padding: 6px 10px;
+}

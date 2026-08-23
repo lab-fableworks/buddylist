@@ -10,7 +10,7 @@
  * Still built for a camera, not a mouse: no sign-in, nothing clickable, pinned to the
  * newest line. ?bare=1 shows only the chat window; ?room=commons follows a single room.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface Feed {
   generated_at: string;
@@ -46,7 +46,6 @@ export function Stream() {
   const [feed, setFeed] = useState<Feed>();
   const [err, setErr] = useState<string>();
   const [now, setNow] = useState(new Date());
-  const bottom = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -65,8 +64,6 @@ export function Stream() {
     const c = setInterval(() => setNow(new Date()), 10_000);
     return () => (clearInterval(t), clearInterval(c));
   }, [load]);
-
-  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [feed]);
 
   const messages = (feed?.messages ?? []).filter((m) => !ROOM || m.room === ROOM);
   const online = feed?.residents.filter((r) => r.state !== "offline") ?? [];
@@ -99,7 +96,6 @@ export function Stream() {
                 </div>
               ),
             )}
-            <div ref={bottom} />
           </div>
         </div>
 
