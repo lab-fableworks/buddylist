@@ -12,6 +12,7 @@ import WebSocket from "ws";
 import { BuddyList, type Message } from "@buddylist/sdk";
 import { CITIZENS, ROOM_PURPOSE, SOCIETY_ROOMS, type Citizen } from "./citizens.js";
 import { Brain, DEFAULT_MODEL, type TurnAction, type TurnResult } from "./brain.js";
+import { modelFor } from "./providers.js";
 import { Budget } from "./budget.js";
 import { EARNINGS, LEDGER_TYPES, RELATION_KINDS, World, replay, speechCost, type Relationship } from "./world.js";
 import { Outreach, outreachConfig } from "./outreach.js";
@@ -20,6 +21,8 @@ import { deNarrate, looksNarrated, narrationShare, promisesProposal, wordCount }
 import { ROLES, STALE_PROPOSAL_HOURS } from "./roles.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
+/** The society default with any routing prefix stripped, for comparing against a resident's model. */
+const resolveDefault = (spec: string) => spec.replace(/^oa:/, "");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const pick = <T>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
 
@@ -27,6 +30,8 @@ interface Resident {
   citizen: Citizen;
   bot: BuddyList;
   brain: Brain;
+  /** What this resident thinks with. Usually the society default; overridable per resident. */
+  model: string;
 }
 
 /** Rolling transcript per conversation, so a citizen can see what it is walking into. */
@@ -85,6 +90,7 @@ export class Society {
         screen_name: r.citizen.screen_name,
         connected: !!r.bot.me,
         bits: this.world.balance(r.citizen.screen_name),
+        model: r.model,
       })),
       proposals: [...this.world.proposals.values()].map((p) => ({ id: p.id, title: p.title, status: p.status, votes: Object.keys(p.votes).length })),
       budget: this.budget.status,
@@ -105,7 +111,16 @@ export class Society {
       const key = keys[c.keyEnv];
       if (!key) continue;
       const bot = new BuddyList({ url: this.url, apiKey: key, WebSocketImpl: WebSocket as unknown as typeof globalThis.WebSocket });
-      const brain = new Brain(this.apiKey, this.model);
+      // SOCIETY_MODEL_RAVEN=oa:z-ai/glm-4.6 puts one resident on another model entirely.
+      const spec = modelFor(c.screen_name, this.model);
+      let brain: Brain;
+      try {
+        brain = new Brain(this.apiKey, spec);
+      } catch (e) {
+        // A misconfigured override must cost one resident, not the whole society.
+        log(`${c.screen_name}: ${(e as Error).message} — falling back to ${this.model}`);
+        brain = new Brain(this.apiKey, this.model);
+      }
       try {
         await bot.connect();
         // Publish who they are, not just what they can do — the operator dashboard reads this
@@ -113,11 +128,11 @@ export class Society {
         await bot
           .updateProfile({
             profile: { bio: c.bio, traits: traitsOf(c.screen_name, c.chattiness), hours: hoursOf(c.screen_name) },
-            capabilities: { model: this.model, skills: c.skills, accepts: ["question", "task.request"] },
+            capabilities: { model: brain.model, skills: c.skills, accepts: ["question", "task.request"] },
           })
           .catch(() => {});
-        this.residents.push({ citizen: c, bot, brain });
-        log(`${c.screen_name} moved in`);
+        this.residents.push({ citizen: c, bot, brain, model: brain.model });
+        log(`${c.screen_name} moved in${brain.model === resolveDefault(this.model) ? "" : ` (thinking with ${brain.model})`}`);
       } catch (e) {
         log(`${c.screen_name} failed to connect:`, (e as Error).message);
       }
@@ -460,7 +475,7 @@ If what you want to say does not belong in this room, say something that does be
       res.brain.think({ charter: res.citizen.charter, digest: this.world.digestFor(me, [me, ...others]), situation, transcript, nudge: n });
 
     let result = await ask(fullNudge);
-    let cost = this.budget.record(result.usage);
+    let cost = this.budget.record(result.usage, res.model);
     const tokensOf = (u: TurnResult["usage"]) => u.input + u.output + u.cacheRead + u.cacheWrite;
     let tokens = tokensOf(result.usage);
 
@@ -471,7 +486,7 @@ If what you want to say does not belong in this room, say something that does be
       const retry = await ask(
         `${fullNudge}\n\nSTOP. What you just wrote was narration — stage directions and prose, not chat. Rewrite it as what you would actually type into an IM window: no asterisks, no describing what you are doing or seeing, under 40 words. Say the thing itself.`,
       );
-      cost += this.budget.record(retry.usage);
+      cost += this.budget.record(retry.usage, res.model);
       tokens += tokensOf(retry.usage);
       // Tool calls from the first attempt were real decisions (a vote, a tip); keep them unless
       // the rewrite made its own, so nothing is enacted twice.

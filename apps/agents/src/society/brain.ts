@@ -1,5 +1,8 @@
 /**
- * The thinking half of a citizen: one Claude call per turn.
+ * The thinking half of a citizen: one model call per turn.
+ *
+ * Which model is providers.ts's business — Claude by default, anything OpenAI-compatible per
+ * resident. This module owns the prompt, the tools, and the shape of a turn.
  *
  * Cost is the dominant design constraint here — a society that talks continuously can spend
  * real money, so this module owns three defences:
@@ -10,21 +13,11 @@
  *   3. A hard dollar budget with adaptive pacing (see budget.ts) that stops the world rather
  *      than quietly draining an account.
  */
-import Anthropic from "@anthropic-ai/sdk";
 import { WORLD } from "./citizens.js";
+import { type ChatTool, type Provider, providerFor, resolveModel } from "./providers.js";
+import type { Usage } from "./budget.js";
 
 export const DEFAULT_MODEL = process.env.SOCIETY_MODEL ?? "claude-opus-5";
-
-/**
- * Not every model accepts every parameter, and sending an unsupported one is a hard 400.
- * `output_config.effort` errors on Haiku 4.5 and Sonnet 4.5; the server-side refusal
- * `fallbacks` parameter exists only on Fable 5 and Opus 5.
- */
-function capabilities(model: string) {
-  const effortModels = /^claude-(fable-5|mythos-5|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6)$/;
-  const fallbackModels = /^claude-(fable-5|mythos-5|opus-5)$/;
-  return { effort: effortModels.test(model), fallbacks: fallbackModels.test(model) };
-}
 
 export interface TurnAction {
   name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood" | "relate" | "take_role" | "resign_role";
@@ -33,12 +26,12 @@ export interface TurnAction {
 export interface TurnResult {
   say: string;
   actions: TurnAction[];
-  usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  usage: Usage;
   refused: boolean;
 }
 
 /** Identical for every citizen so it stays part of the shared cache prefix. */
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS: ChatTool[] = [
   {
     name: "send_bits",
     description: "Pay another resident. Use when you mean to tip, commission work, settle a debt, or back someone. You cannot spend more than your balance.",
@@ -160,27 +153,18 @@ export interface ThinkInput {
 }
 
 export class Brain {
-  private client: Anthropic;
-  private caps: { effort: boolean; fallbacks: boolean };
-  private useFallbacks: boolean;
+  private provider: Provider;
+  /** The model this resident actually thinks with, for the budget and their profile. */
+  readonly model: string;
 
-  constructor(
-    apiKey: string,
-    private model = DEFAULT_MODEL,
-  ) {
-    this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 60_000 });
-    this.caps = capabilities(model);
-    this.useFallbacks = this.caps.fallbacks && process.env.SOCIETY_FALLBACKS !== "0";
+  constructor(apiKey: string, model = DEFAULT_MODEL) {
+    this.provider = providerFor(model, apiKey);
+    this.model = resolveModel(model).model;
   }
 
   async think(input: ThinkInput): Promise<TurnResult> {
-    // Stable prefix (cached) → volatile turn. Order matters: anything that changes per call
-    // must live in `messages`, never in `system`, or the cache never hits.
-    const system: Anthropic.TextBlockParam[] = [
-      { type: "text", text: WORLD },
-      { type: "text", text: input.charter, cache_control: { type: "ephemeral", ttl: "1h" } },
-    ];
-
+    // Stable prefix (cached) -> volatile turn. Order matters: anything that changes per call
+    // must live in the user turn, never in the system blocks, or the cache never hits.
     const user = [
       input.situation,
       "",
@@ -193,54 +177,18 @@ export class Brain {
       input.nudge,
     ].join("\n");
 
-    const params = {
-      model: this.model,
-      max_tokens: 500,
-      // Banter, not analysis: low effort keeps latency and cost down while leaving thinking on
-      // (disabling it on Opus 5 has known failure modes). Omitted where unsupported.
-      ...(this.caps.effort ? { output_config: { effort: "low" as const } } : {}),
-      system,
+    const res = await this.provider.chat({
+      system: [{ text: WORLD }, { text: input.charter, cache: true }],
+      user,
       tools: TOOLS,
-      messages: [{ role: "user" as const, content: user }],
-    };
-
-    let res: Anthropic.Message;
-    try {
-      res = this.useFallbacks
-        ? ((await this.client.beta.messages.create({
-            ...params,
-            betas: ["server-side-fallback-2026-07-01"],
-            fallbacks: "default",
-          } as never)) as unknown as Anthropic.Message)
-        : await this.client.messages.create(params);
-    } catch (e) {
-      // A rejected beta shouldn't take the society down — retry once on the stable path.
-      if (this.useFallbacks && e instanceof Anthropic.BadRequestError) {
-        this.useFallbacks = false;
-        res = await this.client.messages.create(params);
-      } else throw e;
-    }
-
-    const say = res.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text.trim())
-      .join(" ")
-      .trim();
-
-    const actions: TurnAction[] = res.content
-      .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
-      .map((b) => ({ name: b.name as TurnAction["name"], input: b.input as Record<string, unknown> }));
+      maxTokens: 500,
+    });
 
     return {
-      say,
-      actions,
-      refused: res.stop_reason === "refusal",
-      usage: {
-        input: res.usage.input_tokens ?? 0,
-        output: res.usage.output_tokens ?? 0,
-        cacheRead: res.usage.cache_read_input_tokens ?? 0,
-        cacheWrite: res.usage.cache_creation_input_tokens ?? 0,
-      },
+      say: res.text,
+      actions: res.calls.map((c) => ({ name: c.name as TurnAction["name"], input: c.input })),
+      refused: res.refused,
+      usage: res.usage,
     };
   }
 }
