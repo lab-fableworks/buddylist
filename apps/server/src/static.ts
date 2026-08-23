@@ -20,7 +20,25 @@ export async function registerStatic(app: FastifyInstance, dir?: string) {
   const { default: fastifyStatic } = await import("@fastify/static");
   // index:false so the plugin does not claim GET "/" — which host to serve there depends on
   // the hostname, so we own that route ourselves.
-  await app.register(fastifyStatic, { root, wildcard: false, index: false });
+  //
+  // Cache policy: hashed assets are immutable (the hash IS the version), HTML is always
+  // revalidated. This is also the defence against rolling deploys on more than one machine:
+  // once a browser has an asset it never re-fetches it, so it cannot catch a machine that is
+  // mid-deploy and missing the file.
+  await app.register(fastifyStatic, { root, wildcard: false, index: false, cacheControl: false });
+
+  // Cache policy, applied where it cannot be missed rather than through plugin callbacks:
+  // hashed assets are immutable (the hash IS the version), HTML always revalidates. This is
+  // also the defence against rolling deploys on more than one machine — once a browser has an
+  // asset it never re-fetches it, so it cannot catch a machine that is mid-deploy.
+  app.addHook("onSend", async (req, reply, payload) => {
+    if (req.url.startsWith("/assets/")) {
+      if (reply.statusCode === 200) reply.header("cache-control", "public, max-age=31536000, immutable");
+    } else if (String(reply.getHeader("content-type") ?? "").includes("text/html")) {
+      reply.header("cache-control", "no-cache");
+    }
+    return payload;
+  });
 
   // SPA fallback: unknown non-API paths return index.html so client routing works,
   // while /api and /ws keep their real 404s (a JSON 404 is far easier to debug than
@@ -41,14 +59,19 @@ export async function registerStatic(app: FastifyInstance, dir?: string) {
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith("/api") || req.url.startsWith("/ws") || req.url.startsWith("/healthz"))
       return reply.status(404).send({ error: "not_found", message: `no route for ${req.method} ${req.url}` });
-    return reply.sendFile(wantsDashboard(req) ? "dashboard.html" : "index.html");
+    // A missing asset must be a real 404, never the SPA page. Serving HTML with a 200 here is
+    // how a blank screen happens: the module loader receives text/html, refuses it, and the
+    // page dies silently — seen in production when two machines briefly ran different builds.
+    if (req.url.startsWith("/assets/"))
+      return reply.status(404).header("cache-control", "no-store").send({ error: "not_found", message: "no such asset in this build" });
+    return reply.header("cache-control", "no-cache").sendFile(wantsDashboard(req) ? "dashboard.html" : "index.html");
   });
 
   // Root is host-dependent: the retro client on the main host, the dashboard on its own.
-  app.get("/", async (req, reply) => reply.sendFile(wantsDashboard(req) ? "dashboard.html" : "index.html"));
-  app.get("/dashboard", async (_req, reply) => reply.sendFile("dashboard.html"));
+  app.get("/", async (req, reply) => reply.header("cache-control", "no-cache").sendFile(wantsDashboard(req) ? "dashboard.html" : "index.html"));
+  app.get("/dashboard", async (_req, reply) => reply.header("cache-control", "no-cache").sendFile("dashboard.html"));
   // The overlay. Its own path so it can be an OBS browser source without a sign-in.
-  app.get("/stream", async (_req, reply) => reply.sendFile("stream.html"));
+  app.get("/stream", async (_req, reply) => reply.header("cache-control", "no-cache").sendFile("stream.html"));
   app.log.info(`serving web client from ${root}`);
   return true;
 }
