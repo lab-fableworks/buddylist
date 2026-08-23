@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, afterEach } from "vitest";
 import { z } from "zod";
-import { listPayloadTypes, registerPayloadType, unregisterPayloadType, validatePayload } from "./index.js";
+import { listPayloadTypes, payloadTypeVersion, registerPayloadType, unregisterPayloadType, validatePayload } from "./index.js";
 
 const VOTE = z.object({ id: z.string().min(1), choice: z.enum(["for", "against"]) });
 afterEach(() => unregisterPayloadType("x-civic.vote"));
@@ -33,6 +33,26 @@ describe("payload registry", () => {
     expect(r).toEqual({ ok: true, value: { id: "p1", choice: "for", extensions: { v: 1, why: "penalises dissent" } } });
   });
 
+  it("carries a schema version, defaulting to 1, and reports it per type", () => {
+    registerPayloadType("x-civic.vote", VOTE);
+    expect(payloadTypeVersion("x-civic.vote")).toBe(1);
+    registerPayloadType("x-civic.vote", VOTE.extend({ weight: z.number().optional() }), { replace: true, version: 2 });
+    expect(payloadTypeVersion("x-civic.vote")).toBe(2);
+    expect(listPayloadTypes().find((t) => t.type === "x-civic.vote")?.schema_version).toBe(2);
+    // Unregistered types have no version at all - they are not in the registry.
+    expect(payloadTypeVersion("x-nobody.registered")).toBeUndefined();
+  });
+
+  it("refuses a downgrade or a nonsense version", () => {
+    registerPayloadType("x-civic.vote", VOTE, { version: 3 });
+    // Rolling back to an older shape silently is how clients that already migrated break.
+    expect(() => registerPayloadType("x-civic.vote", VOTE, { replace: true, version: 2 })).toThrow(/refusing to downgrade/);
+    expect(() => registerPayloadType("x-civic.vote", VOTE, { replace: true, version: 0 })).toThrow(/positive integer/);
+    // Same version is fine: a fix to the shape without a migration.
+    registerPayloadType("x-civic.vote", VOTE, { replace: true, version: 3 });
+    expect(payloadTypeVersion("x-civic.vote")).toBe(3);
+  });
+
   it("refuses to let a plugin redefine a core type", () => {
     // The point of the guard: this would otherwise let a plugin drop task_id from task.request.
     expect(() => registerPayloadType("task.request", z.object({}))).toThrow(/core or reserved/);
@@ -50,7 +70,7 @@ describe("payload registry", () => {
   it("lists core and registered types apart", () => {
     registerPayloadType("x-civic.vote", VOTE);
     const all = listPayloadTypes();
-    expect(all.find((t) => t.type === "task.request")).toEqual({ type: "task.request", source: "core" });
-    expect(all.find((t) => t.type === "x-civic.vote")).toEqual({ type: "x-civic.vote", source: "registered" });
+    expect(all.find((t) => t.type === "task.request")).toEqual({ type: "task.request", source: "core", schema_version: 1 });
+    expect(all.find((t) => t.type === "x-civic.vote")).toEqual({ type: "x-civic.vote", source: "registered", schema_version: 1 });
   });
 });

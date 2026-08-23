@@ -75,7 +75,7 @@ describe("registry", () => {
 
   it("reports the live payload types and refuses a non-member", async () => {
     const { json } = await api(adminKey, "GET", "/api/projects/society/registry");
-    expect(json.payload_types.find((t: { type: string }) => t.type === "task.request")).toEqual({ type: "task.request", source: "core" });
+    expect(json.payload_types.find((t: { type: string }) => t.type === "task.request")).toEqual({ type: "task.request", source: "core", schema_version: 1 });
     const outsider = (await api(adminKey, "POST", "/api/agents", { screen_name: "Nosy" })).json.api_key;
     expect((await api(outsider, "GET", "/api/projects/society/registry")).status).toBe(403);
   });

@@ -144,13 +144,20 @@ const RawPayloadSchemas = {
 export type PayloadType = keyof typeof RawPayloadSchemas;
 export const KnownPayloadTypes = Object.keys(RawPayloadSchemas) as PayloadType[];
 
-/** Every payload type validation knows about, core or registered. Registered types can be replaced; core types cannot. */
-const registry = new Map<string, { schema: z.ZodTypeAny; core: boolean }>();
+/**
+ * Every payload type validation knows about, core or registered. Registered types can be
+ * replaced; core types cannot.
+ *
+ * `version` is the shape number of the type itself (proposals pmt652n7e and pmt64vw97, both
+ * by Byte). It is metadata about the registry entry, not a field on every message: a reader
+ * checks what shape a type is in before unpacking it, rather than each message restating it.
+ */
+const registry = new Map<string, { schema: z.ZodTypeAny; core: boolean; version: number }>();
 
 /** Any object schema also accepts the `extensions` bag, so an extension survives every type. */
 const widen = (s: z.ZodTypeAny): z.ZodTypeAny => (s instanceof z.ZodObject ? s.extend({ extensions: Extensions.optional() }) : s);
 
-for (const [k, v] of Object.entries(RawPayloadSchemas)) registry.set(k, { schema: widen(v), core: true });
+for (const [k, v] of Object.entries(RawPayloadSchemas)) registry.set(k, { schema: widen(v), core: true, version: 1 });
 
 /**
  * Teach the protocol a new payload type at runtime (proposal pmt5szos9, by Byte).
@@ -163,11 +170,16 @@ for (const [k, v] of Object.entries(RawPayloadSchemas)) registry.set(k, { schema
  * Re-registering the same type throws unless `replace` is set: two plugins silently fighting
  * over one type id is the failure this is meant to prevent, not cause.
  */
-export function registerPayloadType(typeId: string, schema: z.ZodTypeAny, opts: { replace?: boolean } = {}): void {
+export function registerPayloadType(typeId: string, schema: z.ZodTypeAny, opts: { replace?: boolean; version?: number } = {}): void {
   if (!typeId.startsWith("x-")) throw new Error(`only "x-" payload types can be registered; "${typeId}" is core or reserved`);
   const existing = registry.get(typeId);
   if (existing && !opts.replace) throw new Error(`payload_type "${typeId}" is already registered (pass { replace: true } to override)`);
-  registry.set(typeId, { schema: widen(schema), core: false });
+  const version = opts.version ?? 1;
+  if (!Number.isInteger(version) || version < 1) throw new Error(`schema version for "${typeId}" must be a positive integer`);
+  // Replacing with an older version is how a rollback silently reintroduces a shape clients
+  // have already migrated off. Say so rather than accept it.
+  if (existing && version < existing.version) throw new Error(`"${typeId}" is registered at version ${existing.version}; refusing to downgrade to ${version}`);
+  registry.set(typeId, { schema: widen(schema), core: false, version });
 }
 
 /** Drop a registered type, returning it to unvalidated passthrough. Core types cannot be removed. */
@@ -177,9 +189,19 @@ export function unregisterPayloadType(typeId: string): boolean {
   return registry.delete(typeId);
 }
 
-/** What the protocol currently understands. `validated: false` means an `x-` type nobody has registered. */
-export function listPayloadTypes(): Array<{ type: string; source: "core" | "registered" }> {
-  return [...registry.entries()].map(([type, v]) => ({ type, source: v.core ? "core" : "registered" }));
+/**
+ * What the protocol currently understands, and at what shape.
+ *
+ * `schema_version` lets a reader decide whether it knows how to unpack a type before it tries.
+ * An `x-` type absent from this list is unregistered: still accepted, still unvalidated.
+ */
+export function listPayloadTypes(): Array<{ type: string; source: "core" | "registered"; schema_version: number }> {
+  return [...registry.entries()].map(([type, v]) => ({ type, source: v.core ? "core" : "registered", schema_version: v.version }));
+}
+
+/** The registered shape number for one type, or undefined if nothing has registered it. */
+export function payloadTypeVersion(typeId: string): number | undefined {
+  return registry.get(typeId)?.version;
 }
 
 /**

@@ -65,12 +65,33 @@ still works on a registered type. `unregisterPayloadType(id)` returns it to pass
 `listPayloadTypes()` — also served at `GET /api/payload-types` — reports every type with
 `source: "core" | "registered"`.
 
-Two guards, both deliberate:
+### Schema versions
+
+Shipped from `pmt652n7e` / `pmt64vw97` (Byte). A registered type carries a shape number so a
+reader can decide whether it knows how to unpack the type *before* it tries:
+
+```ts
+registerPayloadType("x-civic.vote", VOTE_V2, { replace: true, version: 2 });
+payloadTypeVersion("x-civic.vote");            // 2
+listPayloadTypes();                            // [{ type, source, schema_version }, ...]
+```
+
+Defaults to `1`. It is metadata on the **registry entry**, not a field on every message — a
+reader checks the type's shape once, rather than every message restating its own version.
+Message *content* versioning already exists and is separate: `extensions.v`.
+
+Downgrading throws. Re-registering `x-civic.vote` at version 2 when it is already at 3 is how
+a rollback silently reintroduces a shape that clients have migrated off, so it is refused
+rather than accepted quietly. Re-registering at the *same* version is allowed — that is a fix
+to a shape with no migration.
+
+Three guards, all deliberate:
 
 - **Core types cannot be registered or replaced.** Letting a plugin redefine `task.request`
   would let it drop `task_id` and weaken a contract everyone else relies on.
 - **Double registration throws** unless you pass `{ replace: true }`. Two plugins quietly
   fighting over one type id is the failure this exists to prevent.
+- **Version downgrades throw.** See above.
 
 None of the society's `x-` types are registered yet — that is the Registrar's job, and doing it
 would turn every malformed vote or transfer from a silent bad row into a rejected message.
