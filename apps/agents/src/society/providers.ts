@@ -154,6 +154,23 @@ export function toOpenAITools(tools: ChatTool[]): OpenAI.Chat.Completions.ChatCo
 }
 
 /**
+ * Some models narrate their reasoning inside the visible message rather than in a separate
+ * field. Observed from amazon/nova-lite, which opens with a literal `<thinking>` block. In a
+ * chat room that lands as raw markup, so it is cut here rather than left to the narration
+ * guard, which is looking for prose and would not recognise it.
+ */
+/** Deliberately no backreference: <think> closed by </thinking> has still shown its working. */
+const REASONING_BLOCK = /<(?:think|thinking|reasoning)>[\s\S]*?<\/(?:think|thinking|reasoning)>/gi;
+/** An unclosed opener means the block ran to the token limit; drop the remainder. */
+const REASONING_OPEN = /<(?:think|thinking|reasoning)>[\s\S]*$/i;
+
+export function stripReasoning(text: string): string {
+  // Plain regex literals on purpose: in a template literal `\s` collapses to a literal "s",
+  // which would silently match the wrong thing.
+  return text.replace(REASONING_BLOCK, "").replace(REASONING_OPEN, "").trim();
+}
+
+/**
  * Read one completion back into the shape the society already understands.
  *
  * Tool arguments arrive as a JSON *string*. A model that emits malformed JSON must lose its
@@ -175,7 +192,7 @@ export function fromOpenAI(res: OpenAI.Chat.Completions.ChatCompletion): ChatRes
   }
   const cached = res.usage?.prompt_tokens_details?.cached_tokens ?? 0;
   return {
-    text: (msg?.content ?? "").trim(),
+    text: stripReasoning(msg?.content ?? ""),
     calls,
     // `refusal` is the structured form; content_filter is what most compatible servers send.
     refused: !!msg?.refusal || choice?.finish_reason === "content_filter",

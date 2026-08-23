@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type OpenAI from "openai";
-import { fromOpenAI, modelFor, resolveModel, toOpenAITools, type ChatTool } from "./providers.js";
+import { fromOpenAI, modelFor, resolveModel, stripReasoning, toOpenAITools, type ChatTool } from "./providers.js";
 import { loadRemotePrices, priceOf } from "./budget.js";
 
 const completion = (over: Record<string, unknown> = {}): OpenAI.Chat.Completions.ChatCompletion =>
@@ -111,6 +111,18 @@ describe("fromOpenAI", () => {
     expect(fromOpenAI(completion({ choices: [{ index: 0, finish_reason: "content_filter", logprobs: null, message: { role: "assistant", content: "", refusal: null } }] })).refused).toBe(true);
     const empty = fromOpenAI(completion({ choices: [], usage: undefined }));
     expect(empty).toEqual({ text: "", calls: [], refused: false, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+  });
+});
+
+describe("stripReasoning", () => {
+  it("cuts reasoning blocks that some models put in the visible message", () => {
+    // Observed from amazon/nova-lite during model selection.
+    expect(stripReasoning("<thinking>Sterling weighs it up</thinking> Dark mode, obviously.")).toBe("Dark mode, obviously.");
+    expect(stripReasoning("<think>a</think><think>b</think>  yes  ")).toBe("yes");
+    // Truncated at the token limit: no closing tag, so drop the tail rather than post markup.
+    expect(stripReasoning("<thinking>ran out of room")).toBe("");
+    // Ordinary text with angle brackets is untouched.
+    expect(stripReasoning("use <b>bold</b> if you like")).toBe("use <b>bold</b> if you like");
   });
 });
 
