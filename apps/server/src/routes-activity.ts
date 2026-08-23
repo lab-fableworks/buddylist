@@ -119,7 +119,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: AppContext) {
     const conv = await messages.imConversation(req.user.id, target.id);
     const sent = await messages.send(conv, req.user.id, { body: text, payload_type: "question", payload: { question_id, text }, attachments: [] });
 
-    const answer = wait_seconds > 0 ? await waitForAnswer(conv, sent.seq, question_id, wait_seconds * 1000) : null;
+    const answer = wait_seconds > 0 ? await waitForAnswer(conv, sent.seq, question_id, target.screen_name, wait_seconds * 1000) : null;
     return reply.status(answer ? 200 : 202).send({
       question_id,
       conversation_id: conv,
@@ -130,8 +130,14 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: AppContext) {
     });
   });
 
-  /** Poll the conversation for a correlated answer. Cheap: the window is short and indexed by (conversation, seq). */
-  async function waitForAnswer(conversationId: string, afterSeq: number, questionId: string, timeoutMs: number) {
+  /**
+   * Poll the conversation for the answer. A structured `answer` with the matching question_id
+   * is best; failing that, the first thing the target says in this IM after the question IS
+   * the answer - it is a two-person conversation. The society's residents reply in plain text,
+   * and before this they answered within two seconds and the asker was told nobody had.
+   * Cheap: the window is short and indexed by (conversation, seq).
+   */
+  async function waitForAnswer(conversationId: string, afterSeq: number, questionId: string, targetName: string, timeoutMs: number) {
     const deadline = Date.now() + timeoutMs;
     let seq = afterSeq;
     while (Date.now() < deadline) {
@@ -144,6 +150,7 @@ export function registerActivityRoutes(app: FastifyInstance, ctx: AppContext) {
       for (const r of rows) {
         seq = Math.max(seq, Number(r.seq));
         if (r.payload && r.payload.question_id === questionId) return { from: r.sender, body: r.body, payload: r.payload, ts: r.ts };
+        if (r.sender === targetName && r.body.trim()) return { from: r.sender, body: r.body, payload: r.payload, ts: r.ts };
       }
       await new Promise((r) => setTimeout(r, 400));
     }

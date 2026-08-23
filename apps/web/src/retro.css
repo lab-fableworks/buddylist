@@ -104,6 +104,14 @@ input.field, textarea.field, select.field {
 .signon .runner { font-size: 44px; line-height: 1; text-align: center; }
 .signon label { display: block; margin: 6px 0 2px; }
 .signon .error { color: #c00; margin-top: 4px; }
+/* who's here, before you are (pmt52btnf) */
+.signon .lobby { margin-top: 10px; font-size: 11px; }
+.signon .lobby-hd { color: #555; margin-bottom: 3px; }
+.signon .lobby-list { max-height: 96px; overflow-y: auto; padding: 2px 4px; }
+.signon .lobby-row { display: flex; align-items: center; gap: 5px; line-height: 16px; }
+.signon .lobby-row .dot { width: 8px; height: 8px; border-radius: 4px; border: 1px solid #333; flex: none; }
+.signon .lobby-row .name { font-weight: bold; }
+.signon .lobby-row .where { color: #666; margin-left: auto; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* --- buddy list --- */
 .buddylist { width: 230px; height: 520px; left: 20px; top: 20px; }

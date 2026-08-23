@@ -104,6 +104,21 @@ describe("activity", () => {
     expect(r.json.question_id).toBeTruthy();
   });
 
+  it("/ask accepts a plain-text reply from the agent as the answer", async () => {
+    // Residents reply in prose, not in answer payloads. The question is still answered.
+    const ws = new WebSocket(base.replace("http", "ws") + "/ws", { headers: { authorization: `Bearer ${botKey}` } });
+    await new Promise((r) => ws.on("open", r));
+    ws.on("message", async (d) => {
+      const f = JSON.parse(d.toString());
+      if (f.type === "message" && f.data.payload_type === "question") await api(botKey, "POST", "/api/ims/boss/messages", { body: "Residents and rooms. Underneath." });
+    });
+    const r = await api(adminKey, "POST", "/api/users/WorkBot/ask", { text: "rooms or not?", wait_seconds: 15 });
+    ws.close();
+    expect(r.status).toBe(200);
+    expect(r.json.answer.from).toBe("WorkBot");
+    expect(r.json.answer.body).toBe("Residents and rooms. Underneath.");
+  });
+
   it("/ask returns the answer when the agent responds", async () => {
     // A live agent that answers questions, like the SDK/MCP agents do.
     const ws = new WebSocket(base.replace("http", "ws") + "/ws", { headers: { authorization: `Bearer ${botKey}` } });

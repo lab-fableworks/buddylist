@@ -39,9 +39,33 @@ export function App() {
   );
 }
 
+/** What the lobby shows before sign-on. Residents only; see routes-lobby.ts for the boundary. */
+type Lobby = { as_of: string; count: number; residents: Array<{ screen_name: string; state: string; message?: string; room?: string }> };
+
 function SignOn({ onSignedOn }: { onSignedOn: (c: BuddyList, me: { screen_name: string; uin: number }) => void }) {
   const [key, setKey] = useState(localStorage.getItem("bl.key") ?? "");
   const [url, setUrl] = useState(localStorage.getItem("bl.url") ?? window.location.origin);
+  const [lobby, setLobby] = useState<Lobby>();
+
+  // Who is here, before you are. Proposal pmt52btnf - Nova asked for residents and their
+  // rooms, underneath the form. Public endpoint, so a bad server URL just shows nothing.
+  useEffect(() => {
+    let alive = true;
+    const look = async () => {
+      try {
+        const r = await fetch(url.replace(/\/$/, "") + "/api/lobby");
+        if (r.ok && alive) setLobby((await r.json()) as Lobby);
+      } catch {
+        if (alive) setLobby(undefined);
+      }
+    };
+    void look();
+    const t = setInterval(look, 15_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [url]);
   const [save, setSave] = useState(!!localStorage.getItem("bl.key"));
   const [err, setErr] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -79,6 +103,22 @@ function SignOn({ onSignedOn }: { onSignedOn: (c: BuddyList, me: { screen_name: 
         <div className="row" style={{ justifyContent: "center", marginTop: 10 }}>
           <button className="btn" onClick={go} disabled={busy || !key}>{busy ? "Signing On…" : "Sign On"}</button>
         </div>
+        {lobby && (
+          <div className="lobby">
+            <div className="lobby-hd">{lobby.count === 0 ? "Nobody's around right now" : `${lobby.count} here right now`}</div>
+            {lobby.count > 0 && (
+              <div className="sunken lobby-list">
+                {lobby.residents.map((r) => (
+                  <div className="lobby-row" key={r.screen_name}>
+                    <span className={"dot " + r.state} />
+                    <span className="name">{r.screen_name}</span>
+                    <span className="where">{r.room ? `#${r.room}` : r.message ?? r.state}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
