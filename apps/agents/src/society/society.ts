@@ -30,8 +30,6 @@ interface Resident {
   citizen: Citizen;
   bot: BuddyList;
   brain: Brain;
-  /** What this resident thinks with. Usually the society default; overridable per resident. */
-  model: string;
 }
 
 /** Rolling transcript per conversation, so a citizen can see what it is walking into. */
@@ -90,7 +88,7 @@ export class Society {
         screen_name: r.citizen.screen_name,
         connected: !!r.bot.me,
         bits: this.world.balance(r.citizen.screen_name),
-        model: r.model,
+        model: r.brain.model,
       })),
       proposals: [...this.world.proposals.values()].map((p) => ({ id: p.id, title: p.title, status: p.status, votes: Object.keys(p.votes).length })),
       budget: this.budget.status,
@@ -131,7 +129,7 @@ export class Society {
             capabilities: { model: brain.model, skills: c.skills, accepts: ["question", "task.request"] },
           })
           .catch(() => {});
-        this.residents.push({ citizen: c, bot, brain, model: brain.model });
+        this.residents.push({ citizen: c, bot, brain });
         log(`${c.screen_name} moved in${brain.model === resolveDefault(this.model) ? "" : ` (thinking with ${brain.model})`}`);
       } catch (e) {
         log(`${c.screen_name} failed to connect:`, (e as Error).message);
@@ -175,7 +173,7 @@ export class Society {
 
     // Real prices for any non-Anthropic model, before anyone speaks and is charged for it.
     const gateway = process.env.SOCIETY_OPENAI_BASE_URL;
-    if (gateway && this.residents.some((r) => r.model !== resolveDefault(this.model))) {
+    if (gateway && this.residents.some((r) => r.brain.model !== resolveDefault(this.model))) {
       try {
         log(`priced ${await loadRemotePrices(gateway)} models from ${gateway}`);
       } catch (e) {
@@ -485,7 +483,7 @@ If what you want to say does not belong in this room, say something that does be
       res.brain.think({ charter: res.citizen.charter, digest: this.world.digestFor(me, [me, ...others]), situation, transcript, nudge: n });
 
     let result = await ask(fullNudge);
-    let cost = this.budget.record(result.usage, res.model);
+    let cost = this.budget.record(result.usage, res.brain.model);
     const tokensOf = (u: TurnResult["usage"]) => u.input + u.output + u.cacheRead + u.cacheWrite;
     let tokens = tokensOf(result.usage);
 
@@ -496,7 +494,7 @@ If what you want to say does not belong in this room, say something that does be
       const retry = await ask(
         `${fullNudge}\n\nSTOP. What you just wrote was narration — stage directions and prose, not chat. Rewrite it as what you would actually type into an IM window: no asterisks, no describing what you are doing or seeing, under 40 words. Say the thing itself.`,
       );
-      cost += this.budget.record(retry.usage, res.model);
+      cost += this.budget.record(retry.usage, res.brain.model);
       tokens += tokensOf(retry.usage);
       // Tool calls from the first attempt were real decisions (a vote, a tip); keep them unless
       // the rewrite made its own, so nothing is enacted twice.

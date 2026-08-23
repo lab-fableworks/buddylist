@@ -237,6 +237,16 @@ export class OpenAICompatProvider implements Provider {
   }
 }
 
+/**
+ * A gateway saying "no key" or "no money" - as opposed to a bad request or a hiccup.
+ * OpenRouter answers 402 when a key hits its credit limit, which is a certainty, not a risk:
+ * every key has a ceiling and this society talks until it finds it.
+ */
+export function isCredentialOrCreditError(e: unknown): boolean {
+  const status = (e as { status?: number })?.status;
+  return status === 401 || status === 402 || status === 403;
+}
+
 /** Build the client for a configured model string. */
 export function providerFor(spec: string, anthropicKey: string): Provider {
   const { kind, model } = resolveModel(spec);

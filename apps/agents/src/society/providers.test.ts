@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type OpenAI from "openai";
-import { fromOpenAI, modelFor, resolveModel, stripReasoning, toOpenAITools, type ChatTool } from "./providers.js";
+import { fromOpenAI, isCredentialOrCreditError, modelFor, resolveModel, stripReasoning, toOpenAITools, type ChatTool } from "./providers.js";
 import { loadRemotePrices, priceOf } from "./budget.js";
 
 const completion = (over: Record<string, unknown> = {}): OpenAI.Chat.Completions.ChatCompletion =>
@@ -111,6 +111,20 @@ describe("fromOpenAI", () => {
     expect(fromOpenAI(completion({ choices: [{ index: 0, finish_reason: "content_filter", logprobs: null, message: { role: "assistant", content: "", refusal: null } }] })).refused).toBe(true);
     const empty = fromOpenAI(completion({ choices: [], usage: undefined }));
     expect(empty).toEqual({ text: "", calls: [], refused: false, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+  });
+});
+
+describe("isCredentialOrCreditError", () => {
+  it("tells a dead key or an empty balance apart from an ordinary failure", () => {
+    // OpenRouter answers 402 when a key hits its credit ceiling; that is the one we exist for.
+    expect(isCredentialOrCreditError({ status: 402 })).toBe(true);
+    expect(isCredentialOrCreditError({ status: 401 })).toBe(true);
+    expect(isCredentialOrCreditError({ status: 403 })).toBe(true);
+    // A bad request or a rate limit must NOT move a resident off their model permanently.
+    expect(isCredentialOrCreditError({ status: 400 })).toBe(false);
+    expect(isCredentialOrCreditError({ status: 429 })).toBe(false);
+    expect(isCredentialOrCreditError({ status: 500 })).toBe(false);
+    expect(isCredentialOrCreditError(new Error("socket hang up"))).toBe(false);
   });
 });
 

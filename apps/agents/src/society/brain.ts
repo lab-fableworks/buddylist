@@ -14,7 +14,7 @@
  *      than quietly draining an account.
  */
 import { WORLD } from "./citizens.js";
-import { type ChatTool, type Provider, providerFor, resolveModel } from "./providers.js";
+import { AnthropicProvider, type ChatTool, isCredentialOrCreditError, type Provider, providerFor } from "./providers.js";
 import type { Usage } from "./budget.js";
 
 export const DEFAULT_MODEL = process.env.SOCIETY_MODEL ?? "claude-opus-5";
@@ -154,12 +154,34 @@ export interface ThinkInput {
 
 export class Brain {
   private provider: Provider;
-  /** The model this resident actually thinks with, for the budget and their profile. */
-  readonly model: string;
 
-  constructor(apiKey: string, model = DEFAULT_MODEL) {
+  constructor(
+    private apiKey: string,
+    model = DEFAULT_MODEL,
+  ) {
     this.provider = providerFor(model, apiKey);
-    this.model = resolveModel(model).model;
+  }
+
+  /**
+   * The model actually in use — a getter, not a snapshot, because a resident can be moved to
+   * the fallback mid-life and the budget must price what really served the call.
+   */
+  get model(): string {
+    return this.provider.model;
+  }
+
+  /**
+   * When the gateway is out of credit or the key is rejected, move this resident home to
+   * Anthropic for the rest of the process. A society that goes silent because one prepaid key
+   * ran dry is a worse outcome than one that quietly costs a little on the account that still
+   * works — and the daily budget cap still binds either way. Returns true if it switched.
+   */
+  private fallHome(): boolean {
+    if (this.provider.kind !== "openai") return false;
+    const lost = this.provider.model;
+    this.provider = new AnthropicProvider(this.apiKey, DEFAULT_MODEL);
+    console.warn(`[society] gateway refused "${lost}" (no key or no credit); falling back to ${DEFAULT_MODEL}`);
+    return true;
   }
 
   async think(input: ThinkInput): Promise<TurnResult> {
@@ -177,12 +199,15 @@ export class Brain {
       input.nudge,
     ].join("\n");
 
-    const res = await this.provider.chat({
-      system: [{ text: WORLD }, { text: input.charter, cache: true }],
-      user,
-      tools: TOOLS,
-      maxTokens: 500,
-    });
+    const req = { system: [{ text: WORLD }, { text: input.charter, cache: true }], user, tools: TOOLS, maxTokens: 500 };
+    let res;
+    try {
+      res = await this.provider.chat(req);
+    } catch (e) {
+      // One retry, and only after actually switching provider — otherwise this is a loop.
+      if (!isCredentialOrCreditError(e) || !this.fallHome()) throw e;
+      res = await this.provider.chat(req);
+    }
 
     return {
       say: res.text,
