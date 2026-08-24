@@ -89,6 +89,17 @@ export class Show {
 
   constructor(private contestants: string[]) {}
 
+  /**
+   * A brand-new season, nothing in the log yet. Without this every cadence clock reads
+   * zero at boot, everything is "due" at once, and the eviction check runs first - so the
+   * house's opening act was an eviction on move-in day. A season opens with a challenge;
+   * the first eviction waits a full cadence.
+   */
+  seed(now: number) {
+    this.lastEvictionClosedAt = now;
+    this.lastChallengeClosedAt = 0;
+  }
+
   enabled(env = process.env): boolean {
     return env.SOCIETY_SHOW === "1";
   }
@@ -110,6 +121,7 @@ export class Show {
     const p = payload;
     switch (payloadType) {
       case SHOW_TYPES.challenge:
+        if (this.challenge?.id === String(p.id)) break; // socket echo of our own post
         this.challenge = {
           id: String(p.id),
           metric: (p.metric as MetricId) in METRICS ? (p.metric as MetricId) : "bits",
@@ -124,7 +136,7 @@ export class Show {
         this.lastChallengeClosedAt = at;
         break;
       case SHOW_TYPES.eviction:
-        this.eviction = { id: String(p.id), endsAt: Number(p.ends_at ?? at), votes: {} };
+        if (this.eviction?.id !== String(p.id)) this.eviction = { id: String(p.id), endsAt: Number(p.ends_at ?? at), votes: {} };
         break;
       case SHOW_TYPES.evictVote: {
         const id = String(p.id);
@@ -134,15 +146,16 @@ export class Show {
         break;
       }
       case SHOW_TYPES.evicted: {
-        const name = String(p.name);
-        if (!this.evictedList.includes(name)) this.evictedList.push(name);
-        if (this.immunity === name) this.immunity = undefined;
+        // An empty name is a VOIDED window - it closes and restarts the clock, evicts nobody.
+        const name = String(p.name ?? "");
+        if (name && this.contestants.includes(name) && !this.evictedList.includes(name)) this.evictedList.push(name);
+        if (name && this.immunity === name) this.immunity = undefined;
         this.eviction = undefined;
         this.lastEvictionClosedAt = at;
         break;
       }
       case SHOW_TYPES.finale:
-        this.finale = { id: String(p.id), endsAt: Number(p.ends_at ?? at), votes: {} };
+        if (this.finale?.id !== String(p.id)) this.finale = { id: String(p.id), endsAt: Number(p.ends_at ?? at), votes: {} };
         break;
       case SHOW_TYPES.winner:
         this.winner = typeof p.name === "string" ? p.name : undefined;

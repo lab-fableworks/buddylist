@@ -100,6 +100,40 @@ describe("the finale", () => {
   });
 });
 
+describe("season opening", () => {
+  it("a seeded fresh season owes a challenge immediately and an eviction only after a full cadence", () => {
+    const { show } = fresh();
+    const t0 = 1000 * H; // a realistic clock: well past every cadence, as Date.now() always is
+    show.seed(t0);
+    expect(show.challengeDue(t0 + 1, 24 * H)).toBe(true);
+    expect(show.evictionDue(t0 + 1, 72 * H)).toBe(false);
+    expect(show.evictionDue(t0 + 73 * H, 72 * H)).toBe(true);
+  });
+
+  it("a voided eviction (empty name) closes the window, restarts the clock, and evicts nobody", () => {
+    const { show } = fresh();
+    show.apply(SHOW_TYPES.eviction, { id: "e1", ends_at: 12 * H }, "BigBrother", 0);
+    show.apply(SHOW_TYPES.evicted, { id: "e1", name: "", tally: {} }, "BigBrother", H);
+    expect(show.eviction).toBeUndefined();
+    expect(show.jury()).toEqual([]);
+    expect(show.lastEvictionClosedAt).toBe(H);
+    // A name from outside the cast is equally not an eviction.
+    show.apply(SHOW_TYPES.evicted, { id: "e2", name: "BigBrother" }, "BigBrother", 2 * H);
+    expect(show.jury()).toEqual([]);
+  });
+
+  it("applying the same beat twice (socket echo) changes nothing", () => {
+    const { show } = fresh();
+    show.apply(SHOW_TYPES.challenge, { id: "c1", metric: "net_tips", ends_at: 24 * H, baseline: {} }, "BigBrother", 0);
+    show.apply(SHOW_TYPES.challenge, { id: "c1", metric: "net_tips", ends_at: 24 * H, baseline: {} }, "BigBrother", 0);
+    expect(show.challengesRun).toBe(1);
+    show.apply(SHOW_TYPES.eviction, { id: "e1", ends_at: 12 * H }, "BigBrother", H);
+    show.apply(SHOW_TYPES.evictVote, { id: "e1", target: "Byte" }, "Ace", 2 * H);
+    show.apply(SHOW_TYPES.eviction, { id: "e1", ends_at: 12 * H }, "BigBrother", 2 * H); // echo must not wipe votes
+    expect(show.eviction!.votes).toEqual({ Ace: "Byte" });
+  });
+});
+
 describe("cadence", () => {
   it("never stacks beats: no challenge during an eviction, no eviction at final two", () => {
     const { show } = fresh();

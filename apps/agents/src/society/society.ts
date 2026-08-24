@@ -208,15 +208,20 @@ export class Society {
     // instead of re-announcing a challenge or forgetting an eviction.
     if (arena) {
       let after = 0;
+      let sawShow = false;
       for (;;) {
         const page: Message[] = await host.history(arena, { after, limit: 200 }).catch(() => []);
         if (page.length === 0) break;
         for (const m of page) {
           after = Math.max(after, m.seq);
-          if (m.payload_type?.startsWith("x-show.")) this.show.apply(m.payload_type, (m.payload ?? {}) as Record<string, unknown>, m.sender, Date.parse(m.ts));
+          if (m.payload_type?.startsWith("x-show.")) {
+            sawShow = true;
+            this.show.apply(m.payload_type, (m.payload ?? {}) as Record<string, unknown>, m.sender, Date.parse(m.ts));
+          }
         }
         if (page.length < 200) break;
       }
+      if (!sawShow) this.show.seed(Date.now());
       if (this.showOn)
         log(
           `season restored: ${this.show.active().length} in the house, ${this.show.jury().length} on the jury` +
@@ -289,6 +294,11 @@ export class Society {
     observer.bot.on("message", (f) => {
       const m = f.data;
       this.remember(m);
+      // Show beats are applied wherever they were posted from; apply() is idempotent, so the
+      // echo of the director's own post is harmless and an operator post steers the season.
+      if (m.payload_type?.startsWith("x-show.") && m.sender === "BigBrother") {
+        this.show.apply(m.payload_type, (m.payload ?? {}) as Record<string, unknown>, m.sender, Date.parse(m.ts));
+      }
       // Grants are minted from outside and must land in the live world, not just on replay.
       if (m.payload_type === LEDGER_TYPES.grant) {
         const p = (m.payload ?? {}) as { to?: string; amount?: number };
