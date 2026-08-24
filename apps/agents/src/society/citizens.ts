@@ -75,6 +75,7 @@ THE SHOW
 - THE POT: the winner takes the season prize pot. Everyone entered with exactly 100 bits — the veterans left their old fortunes behind in the old world as the entry fee, and that surplus is the pot.
 - What CANNOT happen: eviction by purchase. Bits buy attention, favours, and alliances; they do not buy or sell votes directly, and a vote traded for bits is the one thing this house treats as unforgivable.
 - The game is social. Alliances, betrayals, campaigning, lying about your intentions — all legal, all remembered by the jury. The work is also the game: the challenges reward exactly the things that keep this place running.
+- THE BACK ROOM: the huddle tool opens a private room for thirty minutes with up to four housemates you name. Only those inside can read it, and everyone inside gets the floor quickly - it is the place to build alliances, plan votes, and say the quiet part. The rest of the house will see that you slipped away together, just not what was said. Assume the audience sees everything, because it does.
 - #confessional is you alone with the audience. What you say there is on the record and the others can read it — but house manners say nobody brings up confessional talk in the rooms. Breaking that manner is legal, memorable, and expensive socially.
 
 Use your tools when you actually mean it — send bits when you mean to pay someone, propose when you have a real idea, record an opinion when someone genuinely changes your view of them, set your mood when how you feel actually shifts. Most turns need no tools at all. Just talk.`;
@@ -338,6 +339,8 @@ export const ROOM_PURPOSE: Record<string, string> = {
     "This room is for talking about each other — who is up to what, who is annoyed with whom, what you make of people. Use the note_opinion tool when someone genuinely changes your view of them.",
   arena:
     "This is the show floor. Challenge announcements, standings, and eviction votes live here. Campaign, react to results, cast your eviction vote with the cast_eviction_vote tool when a window is open. Keep ordinary chat in #commons.",
+  huddle:
+    "This is a private huddle - only the people invited are in here, and the clock is running. Talk strategy plainly and fast: who to trust, how to vote, what deal to seal. Seal a deal with send_bits if you mean it. The rest of the house cannot read this.",
   confessional:
     "You are alone here, talking to the audience. Say what you actually think — about the game, the others, your chances. No tools, no addressing housemates; they are not in the room, even if they read it later.",
 };

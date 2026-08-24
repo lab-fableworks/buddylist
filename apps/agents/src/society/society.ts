@@ -72,6 +72,9 @@ export class Society {
   /** The house's own voice: announcements in #arena. Not a resident, never chats. */
   private houseBot?: BuddyList;
   private lastConfessionalAt = 0;
+  /** Open huddles: private strategy rooms on a 30-minute clock, given priority turns. */
+  private huddles: Array<{ roomId: string; creator: string; members: string[]; topic: string; endsAt: number; turns: number }> = [];
+  private huddleMinutes = Number(process.env.SHOW_HUDDLE_MINUTES ?? 30);
   private confessionalIdx = 0;
   private showCfg = {
     challengeEveryMs: Number(process.env.SHOW_CHALLENGE_HOURS ?? 24) * 3600_000,
@@ -368,6 +371,7 @@ export class Society {
           this.world.credit(responder.citizen.screen_name, EARNINGS.servedHuman);
           continue;
         }
+        if (await this.huddleTick().catch((e) => (log("huddle tick failed:", (e as Error).message), false))) continue;
         if (await this.showTick().catch((e) => (log("show tick failed:", (e as Error).message), false))) continue;
         await this.announceDelinquencies().catch((e) => log("delinquency sweep failed:", (e as Error).message));
         if (await this.maybeDoDuty()) continue;
@@ -377,6 +381,47 @@ export class Society {
         log("turn failed:", (e as Error).message);
       }
     }
+  }
+
+  /**
+   * Private huddles run hot: while one is open its members get the floor on most ticks,
+   * which is what "talking quickly" means in a world where the director allots all turns.
+   * The house keeps breathing on the ticks the huddle skips.
+   */
+  private async huddleTick(): Promise<boolean> {
+    const now = Date.now();
+    // Expire finished huddles, telling the room so the transcript has an ending.
+    for (const h of [...this.huddles]) {
+      if (now < h.endsAt) continue;
+      this.huddles = this.huddles.filter((x) => x !== h);
+      const creator = this.residents.find((r) => r.citizen.screen_name === h.creator);
+      if (creator) await creator.bot.send(h.roomId, "(time - the huddle is over. Back to the house, separately, and act natural.)").catch(() => {});
+      log(`huddle: "${h.topic}" by ${h.creator} expired`);
+    }
+    const h = this.huddles[0];
+    if (!h || Math.random() > 0.75) return false;
+    const eligible = this.residents.filter(
+      (r) =>
+        h.members.includes(r.citizen.screen_name) &&
+        !this.show.isEvicted(r.citizen.screen_name) &&
+        this.world.canAffordSpeech(r.citizen.screen_name, this.goingRate()),
+    );
+    if (eligible.length === 0) return false;
+    // Rotate through the room; a huddle where one person monologues is not a huddle. Sleep
+    // is not an excuse in here - you came to this room on purpose minutes ago.
+    const res = eligible[h.turns % eligible.length];
+    // The observer socket may not be a member, so the transcript is read from the room itself.
+    const hist = await res.bot.history(h.roomId, { limit: 30 }).catch(() => [] as Message[]);
+    this.transcripts.set(h.roomId, hist.filter((m) => m.body).map((m) => `${m.sender}: ${m.body}`));
+    const minsLeft = Math.max(1, Math.round((h.endsAt - now) / 60_000));
+    h.turns += 1;
+    await this.takeTurn(
+      res,
+      h.roomId,
+      `You are in the back room ${h.creator} opened ("${h.topic}") - ${minsLeft} minutes left. In here: ${h.members.join(", ")}. Nobody else can read this. Say the real thing, briefly: who you trust, how you will vote, what you want from the people in this room.`,
+      "huddle",
+    );
+    return true;
   }
 
   /**
@@ -1132,6 +1177,34 @@ If what you want to say does not belong in this room, say something that does be
           .send(gossip, { body: `(${me} now calls ${withWhom} their ${kind} — ${note})`, payload_type: LEDGER_TYPES.relationship, payload: { with: withWhom, kind, note } })
           .catch(() => {});
       log(`relationship: ${me} → ${withWhom}: ${kind} (${note})`);
+      return;
+    }
+
+    if (action.name === "huddle") {
+      const topic = String(action.input.topic ?? "").slice(0, 120) || "strategy";
+      const names = [...new Set((Array.isArray(action.input.invite) ? action.input.invite : []).map(String).filter((n) => n !== me))];
+      const gossip = room("gossip");
+      const invited = names.filter((n) => this.residents.some((r) => r.citizen.screen_name === n) && !this.show.isEvicted(n));
+      const fail = async (why: string) => {
+        if (gossip) await res.bot.send(gossip, `(${me} tried to open a huddle - ${why})`).catch(() => {});
+      };
+      if (this.show.isEvicted(me)) return fail("the jury does not get a back room");
+      if (invited.length === 0) return fail("nobody named is in the house");
+      if (invited.length > 4) return fail("four guests at most");
+      if (this.huddles.some((x) => x.members.includes(me))) return fail("you are already in one");
+      const roomName = `huddle-${me.toLowerCase()}-${Date.now().toString(36)}`;
+      const made = await res.bot
+        .api<{ id: string }>("POST", `/projects/${this.project}/rooms`, { name: roomName, topic: `Private: ${topic}` })
+        .catch(() => null);
+      if (!made) return fail("the room could not be opened");
+      for (const n of invited) await res.bot.api("POST", `/rooms/${made.id}/invite`, { screen_name: n }).catch(() => {});
+      this.huddles.push({ roomId: made.id, creator: me, members: [me, ...invited], topic, endsAt: Date.now() + this.huddleMinutes * 60_000, turns: 0 });
+      await res.bot
+        .send(made.id, `(${me} opened this huddle: "${topic}". In the room: ${[me, ...invited].join(", ")}. ${this.huddleMinutes} minutes on the clock - the house cannot hear you.)`)
+        .catch(() => {});
+      // The house sees the door close. What was said stays inside; that people left does not.
+      if (gossip) await res.bot.send(gossip, `(${me} just pulled ${invited.join(" and ")} into the back room.)`).catch(() => {});
+      log(`huddle: ${me} opened "${topic}" with ${invited.join(", ")}`);
       return;
     }
 

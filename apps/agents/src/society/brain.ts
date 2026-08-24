@@ -20,7 +20,7 @@ import type { Usage } from "./budget.js";
 export const DEFAULT_MODEL = process.env.SOCIETY_MODEL ?? "claude-opus-5";
 
 export interface TurnAction {
-  name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood" | "relate" | "take_role" | "resign_role" | "cast_eviction_vote";
+  name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood" | "relate" | "take_role" | "resign_role" | "cast_eviction_vote" | "huddle";
   input: Record<string, unknown>;
 }
 export interface TurnResult {
@@ -136,6 +136,20 @@ const TOOLS: ChatTool[] = [
         reason: { type: "string", description: "One line, posted publicly next to your name" },
       },
       required: ["target", "reason"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "huddle",
+    description:
+      "Pull housemates into the back room: a private strategy huddle that lasts 30 minutes. Name up to four people; only they can read it, and you will all get the floor quickly in there. Use it to build an alliance, plan votes, or say what you cannot say in front of the house. The others WILL notice you slipped away together. One huddle at a time.",
+    input_schema: {
+      type: "object",
+      properties: {
+        invite: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 4, description: "Screen names to bring in (1-4)" },
+        topic: { type: "string", description: "What this huddle is for, in a few words" },
+      },
+      required: ["invite", "topic"],
       additionalProperties: false,
     },
   },
