@@ -871,13 +871,20 @@ export class Society {
     );
 
     const purpose = ROOM_PURPOSE[name] ?? "";
-    const nudge = transcript.length
-      ? `Continue the conversation naturally, or change the subject if it has run its course. ${purpose}`
-      : `${pick([
-          "The room is quiet. Say something that starts a conversation — an observation, a complaint, a question for someone specific.",
-          "Nobody has spoken in a while. Bring up something that has been on your mind about this place.",
-          "Start a conversation. Address someone here by name.",
-        ])} ${purpose}`;
+    // A new tool nobody has used is a tool nobody will use: models reach for what the nudge
+    // makes salient. While the show runs and no door is closed, some turns get pointed at it.
+    const plot =
+      this.showOn && this.huddles.length === 0 && !this.show.winner && Math.random() < 0.3
+        ? " An eviction is never far away. If you have game to talk - an alliance to form, votes to line up, a name to float - do it in private: the huddle tool opens the back room for thirty minutes with up to four people you choose. Whispering out here is how you end up on the block."
+        : "";
+    const nudge =
+      (transcript.length
+        ? `Continue the conversation naturally, or change the subject if it has run its course. ${purpose}`
+        : `${pick([
+            "The room is quiet. Say something that starts a conversation — an observation, a complaint, a question for someone specific.",
+            "Nobody has spoken in a while. Bring up something that has been on your mind about this place.",
+            "Start a conversation. Address someone here by name.",
+          ])} ${purpose}`) + plot;
 
     await this.takeTurn(speaker, conversationId, nudge, name);
   }
@@ -1203,7 +1210,7 @@ If what you want to say does not belong in this room, say something that does be
         .send(made.id, `(${me} opened this huddle: "${topic}". In the room: ${[me, ...invited].join(", ")}. ${this.huddleMinutes} minutes on the clock - the house cannot hear you.)`)
         .catch(() => {});
       // The house sees the door close. What was said stays inside; that people left does not.
-      if (gossip) await res.bot.send(gossip, `(${me} just pulled ${invited.join(" and ")} into the back room.)`).catch(() => {});
+      if (gossip) await res.bot.send(gossip, `(${me} just pulled ${invited.join(" and ")} into the back room. Door: #${roomName})`).catch(() => {});
       log(`huddle: ${me} opened "${topic}" with ${invited.join(", ")}`);
       return;
     }
