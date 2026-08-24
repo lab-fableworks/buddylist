@@ -204,8 +204,14 @@ export function fromOpenAI(res: OpenAI.Chat.Completions.ChatCompletion): ChatRes
   }
   const cached = res.usage?.prompt_tokens_details?.cached_tokens ?? 0;
   const said = stripReasoning(msg?.content ?? "");
+  // Not only on "length": gemini-2.5-flash-lite reports a clean stop with zero reasoning
+  // tokens and still ends mid-sentence ("I've replayed that in my"), measured directly
+  // against the gateway. Prose that does not end like a sentence gets cut back to the last
+  // one that does; text with no boundary at all is kept, because cutting it would mean
+  // saying nothing.
+  const endsLikeASentence = /[.!?\u2026)"'\]]\s*$/.test(said) || said === "";
   return {
-    text: choice?.finish_reason === "length" ? trimToSentence(said) : said,
+    text: choice?.finish_reason === "length" || !endsLikeASentence ? trimToSentence(said) : said,
     calls,
     // `refusal` is the structured form; content_filter is what most compatible servers send.
     refused: !!msg?.refusal || choice?.finish_reason === "content_filter",

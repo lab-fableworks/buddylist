@@ -128,6 +128,27 @@ describe("isCredentialOrCreditError", () => {
   });
 });
 
+describe("mid-sentence stops (gemini flash-lite)", () => {
+  it("trims a dangling tail even when the model claims a clean stop", () => {
+    const r = fromOpenAI(
+      completion({
+        choices: [{ index: 0, finish_reason: "stop", logprobs: null, message: { role: "assistant", content: "You could hear the gasp through the chat. I've replayed that in my", refusal: null } }],
+      }),
+    );
+    expect(r.text).toBe("You could hear the gasp through the chat.");
+  });
+
+  it("leaves properly finished speech alone, quotes and ellipses included", () => {
+    const fin = (content: string) =>
+      fromOpenAI(completion({ choices: [{ index: 0, finish_reason: "stop", logprobs: null, message: { role: "assistant", content, refusal: null } }] })).text;
+    expect(fin("Spill!")).toBe("Spill!");
+    expect(fin('He said "no."')).toBe('He said "no."');
+    expect(fin("Well\u2026")).toBe("Well\u2026");
+    // No boundary anywhere: kept, not deleted.
+    expect(fin("no punctuation at all here")).toBe("no punctuation at all here");
+  });
+});
+
 describe("trimToSentence", () => {
   it("cuts a reply that ran out of room back to its last finished sentence", () => {
     // The real one: Marlowe posted "...you could hear a bit drop. Makes you" and stopped dead.
@@ -146,10 +167,12 @@ describe("fromOpenAI truncation", () => {
       usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
     } as unknown as OpenAI.Chat.Completions.ChatCompletion);
 
-  it("trims only when the model actually ran out of room", () => {
+  it("trims dangling tails regardless of finish reason", () => {
     expect(withFinish("length", "One good line. And a half").text).toBe("One good line.");
-    // A normal stop may legitimately end without punctuation; leave it alone.
-    expect(withFinish("stop", "One good line. And a half").text).toBe("One good line. And a half");
+    // The old rule left a clean "stop" alone - then gemini-2.5-flash-lite was measured
+    // ending mid-sentence while reporting exactly that. Unfinished prose is unfinished
+    // prose, whatever the model claims about why it stopped.
+    expect(withFinish("stop", "One good line. And a half").text).toBe("One good line.");
   });
 });
 
