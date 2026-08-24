@@ -251,7 +251,7 @@ export class World {
     const def = this.roleDef(name);
     if (!def) return `no such role: ${name}`;
     const held = this.roles.get(name);
-    if (held) return held.holder === who ? `you already hold ${name}` : `${name} is held by ${held.holder}`;
+    if (held) return held.holder === who ? `you ARE the ${name} already - no need to take it, just do the duty` : `${name} is held by ${held.holder}, not vacant`;
     const mine = this.roleOf(who);
     if (mine) return `you already hold ${mine.name}; resign it first`;
     this.roles.set(name, { holder: who, since: now, reports: 0 });
@@ -293,13 +293,20 @@ export class World {
     return { ok: true, paid, late, lateHours };
   }
   /** Replay-side twin of fileReport: the timestamp and count, no payout. */
-  recordReport(name: string, who: string, at: number) {
+  recordReport(name: string, who: string, at: number, countIt = true) {
     const held = this.roles.get(name);
     if (!held || held.holder !== who) return;
     held.lastReportAt = at;
     held.lastPaidAt = at;
-    held.reports += 1;
+    if (countIt) held.reports += 1;
     held.delinquencies = 0;
+  }
+  /** Replay-side twin of a sweep strike, so a deploy neither re-announces nor forgets one. */
+  recordDelinquency(name: string, who: string, count: number, at: number) {
+    const held = this.roles.get(name);
+    if (!held || held.holder !== who) return;
+    held.delinquencies = count;
+    held.lastDelinquencyAt = at;
   }
   /** Periodic roles whose report is overdue. Triggered roles are the director's business. */
   dueRoles(now = Date.now()): Array<{ name: string; holder: string; overdueHours: number }> {
@@ -482,8 +489,9 @@ export class World {
       const vacant = this.vacantRoles();
       if (vacant.length) lines.push(`Vacant roles you could take with the take_role tool: ${vacant.map((r) => `${r.name} (${r.pay}b per report — ${r.duty.split(".")[0]}.)`).join(" | ")}`);
     }
-    const held = [...this.roles.entries()].filter(([, s]) => s.holder !== who);
-    if (held.length) lines.push(`Who holds what: ${held.map(([n, s]) => `${s.holder} is ${n}`).join(", ")}.`);
+    const held = [...this.roles.entries()];
+    if (held.length)
+      lines.push(`Who holds what, per the record: ${held.map(([n, s]) => (s.holder === who ? `YOU are ${n}` : `${s.holder} is ${n}`)).join(", ")}. Nobody holds two roles, and a held role cannot be taken.`);
     const rich = everyone
       .map((n) => `${n} ${this.balance(n)}`)
       .sort((a, b) => Number(b.split(" ")[1]) - Number(a.split(" ")[1]))
@@ -536,6 +544,8 @@ export const LEDGER_TYPES = {
   roleResigned: "x-role.resigned",
   /** A duty done. Carries what was paid, so the dashboard can show it without the rules. */
   roleReport: "x-role.report",
+  /** A duty missed, publicly. Replayed so strikes survive deploys instead of resetting. */
+  delinquent: "x-role.delinquent",
 } as const;
 
 /** Replay a room's history to rebuild world state after a restart. */
@@ -555,7 +565,7 @@ export async function replay(bot: BuddyList, conversationId: string, world: Worl
           // No debit: the grantor is outside the economy, so this is new money.
           world.credit(String(p.to), Number(p.amount));
           break;
-        case LEDGER_TYPES.proposal:
+        case LEDGER_TYPES.proposal: {
           world.addProposal({
             id: String(p.id),
             author: m.sender,
@@ -566,7 +576,10 @@ export async function replay(bot: BuddyList, conversationId: string, world: Worl
             status: "open",
             at: Date.parse(m.ts),
           });
+          const held = world.roleOf(m.sender);
+          if (p.software && held && held.def.requires === "propose") world.recordReport(held.name, m.sender, Date.parse(m.ts), false);
           break;
+        }
         case LEDGER_TYPES.relationship:
           if (p.kind && (RELATION_KINDS as readonly string[]).includes(String(p.kind)))
             world.relate(m.sender, String(p.with), { kind: p.kind as RelationKind, note: String(p.note ?? "") });
@@ -581,6 +594,9 @@ export async function replay(bot: BuddyList, conversationId: string, world: Worl
           // Replay must not pay again: the balance is rebuilt from grants and transfers only,
           // and role pay, like vote pay, is minted state that lives in the running process.
           world.recordReport(String(p.role), m.sender, Date.parse(m.ts));
+          break;
+        case LEDGER_TYPES.delinquent:
+          world.recordDelinquency(String(p.role), m.sender, Number(p.count ?? 1), Date.parse(m.ts));
           break;
         case LEDGER_TYPES.vote:
           world.vote(String(p.id), m.sender, p.choice === "against" ? "against" : "for", electorate);

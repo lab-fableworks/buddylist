@@ -330,7 +330,11 @@ export class Society {
         log(`role: ${d.role} vacated - ${d.holder} hit 3 delinquencies`);
       } else {
         await res.bot
-          .send(roomId, `(${d.role} duty missed - ${d.holder} is marked delinquent, strike ${d.count} of 3. Filing the report, even late, clears it.)`)
+          .send(roomId, {
+            body: `(${d.role} duty missed - ${d.holder} is marked delinquent, strike ${d.count} of 3. Filing the report, even late, clears it.)`,
+            payload_type: LEDGER_TYPES.delinquent,
+            payload: { role: d.role, count: d.count },
+          })
           .catch(() => {});
         log(`role: ${d.holder} delinquent as ${d.role} (${d.count}/3)`);
       }
@@ -356,10 +360,14 @@ export class Society {
       this.dutyAttempt.set(role, Date.now());
       const turn = await this.takeTurn(res, conversationId, `You are the ${role}. ${nudge} This is your report; say it plainly in the room.`, room);
       if (!turn.said) return true; // they took the turn and chose silence: no report, no pay
-      if (def?.requires === "propose" && !turn.proposedSoftware) {
-        // Words are not the deliverable here. The duty stays due; they get the floor again in an hour.
-        log(`duty: ${me} spoke as ${role} but filed no software proposal — not a report`);
-        await res.bot.send(conversationId, `(${role} duty not met — no software proposal was filed. It is still due.)`).catch(() => {});
+      if (def?.requires === "propose") {
+        if (!turn.proposedSoftware) {
+          // Words are not the deliverable here. The duty stays due; they get the floor again in an hour.
+          log(`duty: ${me} spoke as ${role} but filed no software proposal — not a report`);
+          await res.bot.send(conversationId, `(${role} duty not met — no software proposal was filed. It is still due. A refused duplicate does not count; file something new, or vote on what is open.)`).catch(() => {});
+          return true;
+        }
+        // The accepted filing already filed and announced the report inside enact.
         return true;
       }
       const r = this.world.fileReport(role, me);
@@ -819,6 +827,18 @@ If what you want to say does not belong in this room, say something that does be
 
       const id = `p${Date.now().toString(36)}`;
       this.world.addProposal({ id, author: me, title, detail, software, votes: {}, status: "open", at: Date.now() });
+      const myRole = this.world.roleOf(me);
+      if (software && myRole && myRole.def.requires === "propose") {
+        const r = this.world.fileReport(myRole.name, me);
+        await res.bot
+          .send(proposals, {
+            body: `(this filing is also ${me}'s ${myRole.name} report${r.paid ? ` — paid ${r.paid} bits` : " — this window was already paid"})`,
+            payload_type: LEDGER_TYPES.roleReport,
+            payload: { role: myRole.name, paid: r.paid, late: r.late, late_hours: r.lateHours },
+          })
+          .catch(() => {});
+        log(`duty: ${me} filed ${id}, which is their ${myRole.name} report${r.paid ? ` (+${r.paid}b)` : ""}`);
+      }
       await res.bot
         .send(proposals, {
           body: `PROPOSAL [${id}] ${title}\n${detail}${software ? "\n(this one is about the software itself)" : ""}`,

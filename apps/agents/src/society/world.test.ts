@@ -14,7 +14,7 @@ describe("roles", () => {
   it("one role per resident, one resident per role", () => {
     const w = fresh();
     expect(w.takeRole("Treasurer", "Byte")).toBeUndefined();
-    expect(w.takeRole("Treasurer", "Raven")).toBe("Treasurer is held by Byte");
+    expect(w.takeRole("Treasurer", "Raven")).toBe("Treasurer is held by Byte, not vacant");
     expect(w.takeRole("Auditor", "Byte")).toBe("you already hold Treasurer; resign it first");
     expect(w.takeRole("Mayor", "Raven")).toBe("no such role: Mayor");
     expect(w.resignRole("Treasurer", "Raven")).toBe("you do not hold Treasurer");
@@ -276,6 +276,29 @@ describe("delinquency (pmt6c39yy)", () => {
     // The count says so in the holder's briefing while it stands.
     w.sweepDelinquencies(t0 + 148 * H);
     expect(w.digestFor("Byte", people.map((x) => x.screen_name))).toContain("DELINQUENT: 1 of 3");
+  });
+
+  it("replays a recorded strike instead of striking the same silence twice", () => {
+    const w = fresh();
+    const t0 = 1_000_000;
+    w.takeRole("Treasurer", "Byte", t0);
+    // A deploy replays the strike the last process posted at t0+49h...
+    w.recordDelinquency("Treasurer", "Byte", 1, t0 + 49 * H);
+    // ...so the sweep right after boot stays quiet, and the next strike lands a full
+    // cadence later, continuing the count instead of restarting it.
+    expect(w.sweepDelinquencies(t0 + 50 * H)).toEqual([]);
+    expect(w.sweepDelinquencies(t0 + 98 * H)).toEqual([{ role: "Treasurer", holder: "Byte", count: 2, vacated: false }]);
+  });
+
+  it("counts a replayed software filing as the Developer's report (the filing is the duty)", () => {
+    const w = fresh();
+    const W12 = 12 * H;
+    w.takeRole("Developer", "Byte", 10 * W12);
+    // What replay does when it meets the holder's accepted software proposal:
+    w.recordReport("Developer", "Byte", 11 * W12 + H, false);
+    expect(w.dueRoles(11 * W12 + 2 * H)).toEqual([]);
+    expect(w.roles.get("Developer")!.reports).toBe(0); // the x-role.report message carries the count
+    expect(w.roles.get("Developer")!.delinquencies).toBe(0);
   });
 
   it("never strikes triggered roles - the human arriving is their clock", () => {
