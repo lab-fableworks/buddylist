@@ -8,7 +8,10 @@
  * prompt every time. So the rule is enforced here instead, on the output.
  */
 
-const STAGE_DIRECTION = /\*[^*\n]{2,}\*/;
+// A stage direction is a *phrase* in asterisks ("*sips coffee*"). A single word in
+// asterisks is markdown emphasis ("*leverage*") - stripping that as narration ate words
+// out of the middle of Sterling's sentences.
+const STAGE_DIRECTION = /\*[^*\n]+\s[^*\n]+\*/;
 /** Opening moves of a narrated message. "I sit back", "I drain the last of the tea". */
 const NARRATED_OPENER =
   /^(?:\*|I (?:sit|settle|drift|watch|blink|drain|lean|glance|come back|catch myself|look up|pause|set (?:the|my|down)|pull|step|slide|stretch|nod|shrug|sigh|smile|grin|tilt|cross|fold|close|open|reach|turn)\b)/i;
@@ -40,12 +43,18 @@ export function wordCount(text: string): number {
 export function looksNarrated(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
-  return STAGE_DIRECTION.test(t) || NARRATED_OPENER.test(t) || wordCount(t) > WORD_LIMIT;
+  // A message that is nothing but one asterisked span ("*nods*") is a direction too.
+  return STAGE_DIRECTION.test(t) || /^\s*\*[^*\n]+\*\s*$/.test(t) || NARRATED_OPENER.test(t) || wordCount(t) > WORD_LIMIT;
 }
 
 /** Last resort after a failed rewrite: cut the stage directions, keep the first two sentences. */
 export function deNarrate(text: string): string {
-  const stripped = text.replace(/\*[^*\n]*\*/g, " ").replace(/\s+/g, " ").trim();
+  // Emphasis keeps its word; only multi-word spans (actual directions) are deleted.
+  const stripped = text
+    .replace(/\*+([^*\s\n]+)\*+/g, "$1")
+    .replace(/\*[^*\n]*\*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   const sentences = stripped.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) ?? [stripped];
   return sentences.slice(0, 2).join("").trim();
 }

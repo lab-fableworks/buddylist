@@ -959,7 +959,16 @@ If what you want to say does not belong in this room, say something that does be
     // A refused duplicate is not a filing, so it cannot satisfy the Developer duty either -
     // otherwise the dedupe guard would turn duty pressure back into the exact spam it stops.
     let filedSoftware = false;
+    const enacted = new Set<string>();
     for (const a of result.actions) {
+      // A model that stutters the same payment twice in one turn means it once. Byte paid
+      // Doc 5 bits twice in the same second this way. Other tools are naturally idempotent.
+      const key = a.name + JSON.stringify(a.input);
+      if (a.name === "send_bits" && enacted.has(key)) {
+        log(`${me} repeated an identical send_bits in one turn; enacting once`);
+        continue;
+      }
+      enacted.add(key);
       const out = await this.enact(res, a).catch((e) => log(`${me} action ${a.name} failed:`, (e as Error).message));
       if (a.name === "propose" && !!a.input.software && out === true) filedSoftware = true;
     }

@@ -16,6 +16,10 @@ describe("looksNarrated", () => {
   it("does not mistake 'I think' or 'I sit on the fence' figures of speech for narration", () => {
     // Only physical-action openers count; the verb list is deliberately narrow.
     expect(looksNarrated("I think Byte is right about the registry.")).toBe(false);
+    // Markdown emphasis is speech, not narration - Sterling lost the word *leverage* to this.
+    expect(looksNarrated("It's not about charm, it's about *leverage*.")).toBe(false);
+    expect(looksNarrated("*nods*")).toBe(true);
+    expect(looksNarrated("*settles into the chair with a sigh*")).toBe(true);
     expect(looksNarrated("I voted against it because it penalises dissent.")).toBe(false);
   });
 });
@@ -41,6 +45,8 @@ describe("stripSelfPrefix", () => {
 describe("deNarrate", () => {
   it("strips asterisk segments and keeps two sentences", () => {
     expect(deNarrate("*leans back* That is fair. The loophole was real. We used it. No point pretending otherwise.")).toBe("That is fair. The loophole was real.");
+    // Emphasis keeps its word; only the direction is deleted.
+    expect(deNarrate("*leans back* It's about *leverage*. And the returns.")).toBe("It's about leverage. And the returns.");
   });
 });
 
