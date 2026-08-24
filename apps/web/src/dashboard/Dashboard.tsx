@@ -20,7 +20,7 @@ interface Stats {
   };
   proposals: Array<{
     id: string; title: string; detail: string; software: boolean; author: string; ts: string;
-    status: string; shipped: boolean; repeats?: number; votes: Array<{ voter: string; choice: string }>;
+    status: string; shipped: boolean; declined: boolean; repeats?: number; votes: Array<{ voter: string; choice: string }>;
   }>;
   members: Array<{
     screen_name: string; kind: string; role: string; bits: number;
@@ -198,7 +198,7 @@ function Main({ apiKey, onOut }: { apiKey: string; onOut: () => void }) {
 
   const online = stats?.members.filter((m) => m.presence.state !== "offline").length ?? 0;
   const openProps = stats?.proposals.filter((p) => p.status === "open").length ?? 0;
-  const awaiting = stats?.proposals.filter((p) => p.software && p.status === "passed" && !p.shipped) ?? [];
+  const awaiting = stats?.proposals.filter((p) => p.software && p.status === "passed" && !p.shipped && !p.declined) ?? [];
   const supply = useMemo(() => Object.values(stats?.economy.balances ?? {}).reduce((a, b) => a + Math.max(0, b), 0), [stats]);
 
   return (
@@ -542,6 +542,7 @@ function Proposal({ p }: { p: Stats["proposals"][number] }) {
         <span className={"tag " + p.status}>{p.status}</span>
         {p.software && <span className="tag software">software</span>}
         {p.shipped && <span className="tag shipped">shipped</span>}
+        {p.declined && <span className="tag" title="Reviewed by the operator and turned down; the reason is in #patch-notes">declined</span>}
         <span className="spacer" style={{ flex: 1 }} />
         <span className="tag">{p.author}</span>
       </div>

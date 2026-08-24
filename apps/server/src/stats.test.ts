@@ -62,6 +62,10 @@ beforeAll(async () => {
   await post(ravenKey, "x-civic.proposal", { id: "p2", title: "Extensible payload metadata", software: true });
   await post(adminKey, "x-civic.resolution", { id: "p2", status: "passed" });
   await api(adminKey, "POST", `/api/rooms/${notes}/messages`, { body: "SHIPPED [p2] - extensions field is live." });
+  // A passed software proposal the operator reviewed and DECLINED - decided, not awaiting.
+  await post(ravenKey, "x-civic.proposal", { id: "p4", title: "Charge by wire bytes", software: true });
+  await post(adminKey, "x-civic.resolution", { id: "p4", status: "passed" });
+  await api(adminKey, "POST", `/api/rooms/${notes}/messages`, { body: "DECLINED [p4] - tokens are the real cost; bytes are not." });
   // Byte's three votes on p1 above are ONE vote. These two are what make "3 votes cast" true.
   await post(ravenKey, "x-civic.proposal", { id: "p3", title: "A third thing", software: false });
   await post(byteKey, "x-civic.vote", { id: "p2", choice: "for" });
@@ -153,8 +157,20 @@ describe("stats", () => {
     // The regression: before this, only x-civic.shipped counted, so p2 sat in the operator's
     // "awaiting your decision" list forever despite having been built.
     expect(p2.shipped).toBe(true);
-    const awaiting = s.proposals.filter((p: { software: boolean; status: string; shipped: boolean }) => p.software && p.status === "passed" && !p.shipped);
+    const awaiting = s.proposals.filter((p: { software: boolean; status: string; shipped: boolean; declined: boolean }) => p.software && p.status === "passed" && !p.shipped && !p.declined);
     expect(awaiting).toEqual([]);
+  });
+
+  it("takes a DECLINED verdict off the operator's queue without crediting shipped work", async () => {
+    const s = (await api(adminKey, "GET", "/api/stats/society")).json;
+    const p4 = s.proposals.find((p: { id: string }) => p.id === "p4");
+    expect(p4.status).toBe("passed");
+    expect(p4.declined).toBe(true);
+    expect(p4.shipped).toBe(false);
+    const awaiting = s.proposals.filter((p: { software: boolean; status: string; shipped: boolean; declined: boolean }) => p.software && p.status === "passed" && !p.shipped && !p.declined);
+    expect(awaiting).toEqual([]);
+    // No build happened, so a decline never counts among the shipped.
+    expect(s.proposals.filter((p: { shipped: boolean }) => p.shipped).length).toBe(2);
   });
 
   it("refuses to a non-member", async () => {

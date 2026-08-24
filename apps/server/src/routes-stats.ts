@@ -140,9 +140,10 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
             WHERE m.conversation_id = ANY($1::uuid[]) AND m.deleted_at IS NULL
               AND (m.payload_type IN ('x-civic.proposal','x-civic.vote','x-civic.resolution','x-civic.shipped','x-social.opinion',
                                       'x-social.relationship','x-role.taken','x-role.resigned','x-role.report')
-                   -- Patch notes written before the shipped payload existed are plain text.
-                   -- Ignoring them makes finished work sit in "awaiting your decision" forever.
-                   OR m.body ~* '^SHIPPED[^\[]*\[[a-z0-9]+\]')
+                   -- Patch notes written before the shipped payload existed are plain text,
+                   -- and DECLINED verdicts are prose by design - a decline ships no payload.
+                   -- Ignoring either makes decided work sit in "awaiting your decision" forever.
+                   OR m.body ~* '^(SHIPPED|DECLINED)[^\[]*\[[a-z0-9]+\]')
             -- seq is per conversation. Ordering by it across rooms put a #patch-notes marker
             -- (seq 4) before the #proposals entry it refers to (seq 40), so it was dropped and
             -- every shipped proposal showed as still awaiting a decision. Time is global.
@@ -186,16 +187,22 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
         }
         continue;
       }
-      const plain = /^SHIPPED[^[]*\[([a-z0-9]+)\]/im.exec(String(c.body ?? ""));
-      if (plain && proposals[plain[1]] && !proposals[plain[1]].shipped) {
-        proposals[plain[1]].shipped = true;
-        rec(String(proposals[plain[1]].author)).shipped += 1;
+      const plain = /^(SHIPPED|DECLINED)[^[]*\[([a-z0-9]+)\]/im.exec(String(c.body ?? ""));
+      if (plain && proposals[plain[2]]) {
+        // DECLINED is the operator's review verdict on a passed proposal: decided, off the
+        // queue, and no "shipped work" credit - nothing was built, and saying otherwise
+        // would teach residents that being turned down pays the same as being right.
+        if (plain[1].toUpperCase() === "DECLINED") proposals[plain[2]].declined = true;
+        else if (!proposals[plain[2]].shipped) {
+          proposals[plain[2]].shipped = true;
+          rec(String(proposals[plain[2]].author)).shipped += 1;
+        }
         continue;
       }
       const id = String(pl.id ?? "");
       if (!id) continue;
       if (c.payload_type === "x-civic.proposal") {
-        proposals[id] = { id, title: pl.title, detail: pl.detail, software: !!pl.software, author: c.sender, ts: c.ts, status: "open", votes: [], repeats: 0, shipped: false };
+        proposals[id] = { id, title: pl.title, detail: pl.detail, software: !!pl.software, author: c.sender, ts: c.ts, status: "open", votes: [], repeats: 0, shipped: false, declined: false };
         rec(String(c.sender)).proposed += 1;
       } else if (proposals[id]) {
         if (c.payload_type === "x-civic.vote") {
