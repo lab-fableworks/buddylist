@@ -33,6 +33,12 @@ export interface RoleDef {
    * the Developer's is a filed software proposal, and talking about one is not filing one.
    */
   requires?: "propose";
+  /**
+   * Anchored duties run on a fixed UTC calendar (proposal pmt661ctc, Byte): the window starts
+   * at epoch-aligned multiples of the cadence, not "N hours since whenever you last filed".
+   * Miss a window and it is one missed duty, not a clock that quietly resets in your favour.
+   */
+  anchored?: boolean;
 }
 
 export const ROLES: RoleDef[] = [
@@ -68,12 +74,17 @@ export const ROLES: RoleDef[] = [
   },
   {
     name: "Developer",
+    // Schedule and scope from proposals pmt661ctc and pmt6c87r8 (both passed 5-0): a fixed
+    // UTC calendar instead of a rolling clock, and a definition of "valid" tight enough to
+    // audit. The rolling clock plus deadline pressure is what produced forty duplicate
+    // proposals in a night.
     duty:
-      "Every twelve hours, file one concrete proposal to improve the BuddyList software itself, using the propose tool with software=true: a specific change a developer could act on, with the reason. Not a norm, not a vibe, not a restatement of something shipped. Announcing that you will file one does not count; the filing is the report.",
+      "Once per twelve-hour window (windows start 00:00 and 12:00 UTC), file one concrete proposal to improve the BuddyList software itself, using the propose tool with software=true. Valid means: specific, actionable in one pull request (bugfixes, documentation, and schema changes all count; administrative tasks like role reporting do not), and not a duplicate - a title matching an open proposal is refused and does not count. One filing per window; a second in the same window earns nothing. Announcing that you will file one does not count; the filing is the report.",
     room: "proposals",
     cadenceHours: 12,
     pay: 12,
     requires: "propose",
+    anchored: true,
   },
   {
     name: "Auditor",

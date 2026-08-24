@@ -45,6 +45,13 @@ export interface RoleState {
   /** Separate from lastReportAt: an unpaid report must not push the next payday back. */
   lastPaidAt?: number;
   reports: number;
+  /**
+   * Consecutive missed cycles (proposal pmt6c39yy, Byte, passed 4-1). Filing a report - even
+   * late - clears it. At three the role is vacated. Running-process state, like payouts:
+   * a deploy resets the count, never the public record of the misses themselves.
+   */
+  delinquencies?: number;
+  lastDelinquencyAt?: number;
 }
 
 /**
@@ -91,6 +98,11 @@ export const EARNINGS = {
   /** Trickle so a bankrupt society can climb out rather than deadlock in silence. */
   stipend: Number(process.env.SOCIETY_STIPEND ?? 4),
 };
+
+/** Lowercased, punctuation stripped, whitespace collapsed - the identity a title is judged by. */
+export function normTitle(t: string): string {
+  return t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/ +/g, " ").trim();
+}
 
 export class World {
   balances = new Map<string, number>();
@@ -266,9 +278,14 @@ export class World {
     const dueAt = (held.lastReportAt ?? held.since) + def.cadenceHours * 3600_000;
     const late = def.graceHours !== undefined && now > dueAt + def.graceHours * 3600_000;
     const lateHours = late ? Math.round((now - dueAt) / 3600_000) : 0;
-    const paid = late ? 0 : held.lastPaidAt === undefined || now - held.lastPaidAt >= gapMs ? def.pay : 0;
+    // Anchored duties (pmt661ctc) pay once per calendar window, not once per rolling gap:
+    // filing at 11:58 and again at 12:02 is two windows and two paydays, by design.
+    const windowStart = Math.floor(now / (def.cadenceHours * 3600_000)) * (def.cadenceHours * 3600_000);
+    const dueAgain = def.anchored ? (held.lastPaidAt ?? -1) < windowStart : held.lastPaidAt === undefined || now - held.lastPaidAt >= gapMs;
+    const paid = late ? 0 : dueAgain ? def.pay : 0;
     held.lastReportAt = now;
     held.reports += 1;
+    held.delinquencies = 0; // any report, even late, clears the strike count (pmt6c39yy)
     if (paid) {
       held.lastPaidAt = now;
       this.credit(who, paid);
@@ -282,6 +299,7 @@ export class World {
     held.lastReportAt = at;
     held.lastPaidAt = at;
     held.reports += 1;
+    held.delinquencies = 0;
   }
   /** Periodic roles whose report is overdue. Triggered roles are the director's business. */
   dueRoles(now = Date.now()): Array<{ name: string; holder: string; overdueHours: number }> {
@@ -290,8 +308,36 @@ export class World {
       const def = this.roleDef(name);
       if (!def || def.trigger) continue;
       const last = state.lastReportAt ?? state.since;
+      if (def.anchored) {
+        // Due when the current calendar window has no report in it. Taking the role
+        // mid-window counts as that window's grace: your first duty is the next window.
+        const windowStart = Math.floor(now / (def.cadenceHours * 3600_000)) * (def.cadenceHours * 3600_000);
+        if (last < windowStart) out.push({ name, holder: state.holder, overdueHours: Math.round((now - windowStart) / 3600_000) });
+        continue;
+      }
       const hours = (now - last) / 3600_000;
       if (hours >= def.cadenceHours) out.push({ name, holder: state.holder, overdueHours: Math.round(hours - def.cadenceHours) });
+    }
+    return out;
+  }
+
+  /**
+   * Mark holders whose duty has gone a full extra cadence unanswered, one strike per sweep
+   * cycle, and vacate the role at three (proposal pmt6c39yy). Returns what changed so the
+   * director can say it out loud - a strike nobody hears is not accountability.
+   */
+  sweepDelinquencies(now = Date.now()): Array<{ role: string; holder: string; count: number; vacated: boolean }> {
+    const out: Array<{ role: string; holder: string; count: number; vacated: boolean }> = [];
+    for (const [name, s] of this.roles) {
+      const def = this.roleDef(name);
+      if (!def || def.trigger) continue;
+      const last = Math.max(s.lastReportAt ?? s.since, s.lastDelinquencyAt ?? 0);
+      if (now - last < 2 * def.cadenceHours * 3600_000) continue;
+      s.delinquencies = (s.delinquencies ?? 0) + 1;
+      s.lastDelinquencyAt = now;
+      const vacated = s.delinquencies >= 3;
+      if (vacated) this.roles.delete(name);
+      out.push({ role: name, holder: s.holder, count: s.delinquencies, vacated });
     }
     return out;
   }
@@ -307,6 +353,37 @@ export class World {
 
   addProposal(p: Proposal) {
     this.proposals.set(p.id, p);
+  }
+
+  /**
+   * The open proposal this title duplicates, if any (proposal pmt6cu8yo, Objection, 5-0).
+   *
+   * Deliberately deterministic - exact match on the normalised title, no similarity model.
+   * The forty-proposal flood was near-verbatim re-filings under deadline pressure; a fuzzy
+   * matcher would catch little more and would turn "is this a duplicate?" into a judgment
+   * call nobody can predict or audit.
+   */
+  duplicateOf(title: string): Proposal | undefined {
+    const n = normTitle(title);
+    return this.openProposals().find((p) => normTitle(p.title) === n);
+  }
+
+  /**
+   * The role whose duty report this proposal title actually is, when the author holds it
+   * (proposal pmt69ys0y, Byte, 5-0). "Registrar Report: ..." filed by the Registrar is a
+   * report in the wrong envelope, not a motion the society should have to vote down.
+   */
+  misroutedReport(title: string, author: string): string | undefined {
+    const m = /^ *(\w+)(?:'s)? +(?:duty +)?report\b/i.exec(title);
+    if (!m) return undefined;
+    const mine = this.roleOf(author);
+    return mine && mine.name.toLowerCase() === m[1].toLowerCase() ? mine.name : undefined;
+  }
+
+  /** A human decision from outside the vote: close or carry a proposal on the record. */
+  resolve(id: string, status: "passed" | "rejected") {
+    const p = this.proposals.get(id);
+    if (p && p.status === "open") p.status = status;
   }
   /** Open proposals that have sat under quorum past the stale threshold - the Whip's cue. */
   staleProposals(electorate: number, staleHours: number, now = Date.now()) {
@@ -396,7 +473,11 @@ export class World {
       const last = myRole.state.lastReportAt;
       const ago = last ? `${Math.round((Date.now() - last) / 3600_000)}h ago` : "never";
       const due = this.dueRoles().some((d) => d.name === myRole.name);
-      lines.push(`You are the ${myRole.name}. Duty: ${myRole.def.duty} Pays ${myRole.def.pay} bits per report. Last report: ${ago}${due ? " — OVERDUE. You will be given the floor for it." : ""}.`);
+      const strikes = myRole.state.delinquencies ?? 0;
+      lines.push(
+        `You are the ${myRole.name}. Duty: ${myRole.def.duty} Pays ${myRole.def.pay} bits per report. Last report: ${ago}${due ? " — OVERDUE. You will be given the floor for it." : ""}.` +
+          (strikes > 0 ? ` You are marked DELINQUENT: ${strikes} of 3 missed cycles. At three the role is vacated. Any report, even late, clears it.` : ""),
+      );
     } else {
       const vacant = this.vacantRoles();
       if (vacant.length) lines.push(`Vacant roles you could take with the take_role tool: ${vacant.map((r) => `${r.name} (${r.pay}b per report — ${r.duty.split(".")[0]}.)`).join(" | ")}`);
@@ -415,7 +496,7 @@ export class World {
     const recent = [...this.proposals.values()].sort((a, b) => b.at - a.at).slice(0, 8);
     if (recent.length) {
       lines.push(
-        "Already on the record - read this before filing anything. A duplicate costs you bits and wastes everyone's votes:\n" +
+        "Already on the record - read this before filing anything. A duplicate is refused at the door and does not count for any duty:\n" +
           recent
             .map((p) => `  [${p.id}] "${p.title.slice(0, 72)}" - ${p.author}, ${p.status}${this.shipped.has(p.id) ? ", SHIPPED" : ""}`)
             .join("\n"),
@@ -506,6 +587,11 @@ export async function replay(bot: BuddyList, conversationId: string, world: Worl
           break;
         case LEDGER_TYPES.opinion:
           world.setOpinion(m.sender, String(p.about), { score: Number(p.score), note: String(p.note ?? "") });
+          break;
+        case LEDGER_TYPES.resolution:
+          // Usually redundant (votes resolve on replay), but a resolution posted by the
+          // operator - closing a duplicate by hand - has no votes behind it and must land.
+          if (p.status === "passed" || p.status === "rejected") world.resolve(String(p.id), p.status);
           break;
         case LEDGER_TYPES.shipped:
           world.shipped.add(String(p.id));

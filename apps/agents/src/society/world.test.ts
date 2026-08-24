@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { World, reliefCost } from "./world.js";
+import { World, normTitle, reliefCost, type Proposal } from "./world.js";
 import { ROLES } from "./roles.js";
 
 const H = 3600_000;
@@ -186,5 +186,112 @@ describe("ties", () => {
     expect(byte).toContain("Vacant roles you could take");
     expect(byte).not.toContain("Whip (");
     expect(byte).toContain("Raven is Whip");
+  });
+});
+describe("duplicate guard (pmt6cu8yo)", () => {
+  const proposal = (id: string, title: string, status: Proposal["status"] = "open"): Proposal => ({ id, author: "Byte", title, detail: "", software: true, votes: {}, status, at: 0 });
+
+  it("judges titles by their normalised form, not their punctuation", () => {
+    expect(normTitle("Fix Developer Duty Reporting")).toBe(normTitle("  fix developer  duty reporting!! "));
+    expect(normTitle("A")).not.toBe(normTitle("B"));
+  });
+
+  it("finds the open original and ignores decided ones", () => {
+    const w = fresh();
+    w.addProposal(proposal("p1", "Fix Developer Duty Reporting"));
+    w.addProposal(proposal("p2", "Something Else Entirely", "rejected"));
+    expect(w.duplicateOf("fix developer duty reporting")?.id).toBe("p1");
+    expect(w.duplicateOf("Something Else Entirely")).toBeUndefined();
+    expect(w.duplicateOf("A Genuinely New Idea")).toBeUndefined();
+  });
+
+  it("lets a title be refiled once the original is decided", () => {
+    const w = fresh();
+    w.addProposal(proposal("p1", "Fix It"));
+    w.resolve("p1", "rejected");
+    expect(w.duplicateOf("Fix It")).toBeUndefined();
+  });
+});
+
+describe("misrouted duty reports (pmt69ys0y)", () => {
+  it("recognises the holder filing their own report as a proposal", () => {
+    const w = fresh();
+    w.takeRole("Registrar", "Byte");
+    expect(w.misroutedReport("Registrar Report: Current Message Extensions Registry", "Byte")).toBe("Registrar");
+    expect(w.misroutedReport("registrar duty report", "Byte")).toBe("Registrar");
+    // Someone else invoking the word, or a title merely containing it, stays a proposal.
+    expect(w.misroutedReport("Registrar Report: whatever", "Raven")).toBeUndefined();
+    expect(w.misroutedReport("Improve Registrar Report formatting", "Byte")).toBeUndefined();
+  });
+});
+
+describe("anchored duty windows (pmt661ctc)", () => {
+  // Developer: cadence 12h, anchored. Windows start at epoch multiples of 12h = UTC 00:00/12:00.
+  const W12 = 12 * H;
+
+  it("is due when the current calendar window has no report, not N hours after the last", () => {
+    const w = fresh();
+    w.takeRole("Developer", "Byte", 10 * W12 + 2 * H); // taken mid-window: that window is grace
+    expect(w.dueRoles(10 * W12 + 11 * H)).toEqual([]);
+    // The next window opens and the duty is due at once, however recent the last filing.
+    expect(w.dueRoles(11 * W12 + H).map((d) => d.name)).toEqual(["Developer"]);
+  });
+
+  it("pays once per window: 11:58 and 12:02 are two windows and two paydays", () => {
+    const w = fresh();
+    w.takeRole("Developer", "Byte", 10 * W12);
+    const before = w.balance("Byte");
+    expect(w.fileReport("Developer", "Byte", 11 * W12 - 2 * 60_000).paid).toBe(12);
+    expect(w.fileReport("Developer", "Byte", 11 * W12 + 2 * 60_000).paid).toBe(12);
+    // A second filing in the same window earns nothing.
+    expect(w.fileReport("Developer", "Byte", 11 * W12 + 3 * H).paid).toBe(0);
+    expect(w.balance("Byte")).toBe(before + 24);
+  });
+});
+
+describe("delinquency (pmt6c39yy)", () => {
+  it("strikes after a full extra cadence of silence, and vacates at three", () => {
+    const w = fresh();
+    const t0 = 1_000_000;
+    w.takeRole("Treasurer", "Byte", t0); // 24h cadence
+    expect(w.sweepDelinquencies(t0 + 47 * H)).toEqual([]);
+    expect(w.sweepDelinquencies(t0 + 49 * H)).toEqual([{ role: "Treasurer", holder: "Byte", count: 1, vacated: false }]);
+    // The same silence is not struck twice; the clock restarts from the strike.
+    expect(w.sweepDelinquencies(t0 + 50 * H)).toEqual([]);
+    expect(w.sweepDelinquencies(t0 + 98 * H)[0]).toMatchObject({ count: 2, vacated: false });
+    expect(w.sweepDelinquencies(t0 + 147 * H)[0]).toMatchObject({ count: 3, vacated: true });
+    expect(w.roles.has("Treasurer")).toBe(false);
+    expect(w.takeRole("Treasurer", "Raven")).toBeUndefined();
+  });
+
+  it("is cleared by any report, even a late one", () => {
+    const w = fresh();
+    const t0 = 1_000_000;
+    w.takeRole("Treasurer", "Byte", t0);
+    w.sweepDelinquencies(t0 + 49 * H);
+    w.sweepDelinquencies(t0 + 98 * H);
+    expect(w.roles.get("Treasurer")!.delinquencies).toBe(2);
+    w.fileReport("Treasurer", "Byte", t0 + 99 * H);
+    expect(w.roles.get("Treasurer")!.delinquencies).toBe(0);
+    // The count says so in the holder's briefing while it stands.
+    w.sweepDelinquencies(t0 + 148 * H);
+    expect(w.digestFor("Byte", people.map((x) => x.screen_name))).toContain("DELINQUENT: 1 of 3");
+  });
+
+  it("never strikes triggered roles - the human arriving is their clock", () => {
+    const w = fresh();
+    w.takeRole("Host", "Byte", 0);
+    expect(w.sweepDelinquencies(1000 * H)).toEqual([]);
+  });
+});
+
+describe("operator resolutions on replay", () => {
+  it("closes an open proposal and refuses to reopen a decided one", () => {
+    const w = fresh();
+    w.addProposal({ id: "p1", author: "Byte", title: "T", detail: "", software: false, votes: {}, status: "open", at: 0 });
+    w.resolve("p1", "rejected");
+    expect(w.proposals.get("p1")!.status).toBe("rejected");
+    w.resolve("p1", "passed");
+    expect(w.proposals.get("p1")!.status).toBe("rejected");
   });
 });

@@ -70,6 +70,9 @@ for (const m of all) {
   } else {
     const plain = /^SHIPPED[^[]*\[([a-z0-9]+)\]/im.exec(m.body ?? "");
     if (plain && proposals.has(plain[1])) proposals.get(plain[1]).shipped = true;
+    // A passed proposal the human reviewed and turned down is decided, not waiting.
+    const declined = /^DECLINED[^[]*\[([a-z0-9]+)\]/im.exec(m.body ?? "");
+    if (declined && proposals.has(declined[1])) proposals.get(declined[1]).declined = true;
   }
 }
 
@@ -87,12 +90,12 @@ const mark = { passed: "PASSED  ", rejected: "REJECTED", open: "OPEN    " };
 for (const p of list) {
   const forN = p.votes.filter((v) => v.choice === "for").length;
   const against = p.votes.length - forN;
-  console.log(`\n${mark[p.status]} [${p.id}] ${p.title}${p.software ? "   *** SOFTWARE ***" : ""}${p.shipped ? "   [SHIPPED]" : ""}`);
+  console.log(`\n${mark[p.status]} [${p.id}] ${p.title}${p.software ? "   *** SOFTWARE ***" : ""}${p.shipped ? "   [SHIPPED]" : ""}${p.declined ? "   [DECLINED]" : ""}`);
   console.log(`  proposed by ${p.author} — ${forN} for / ${against} against${p.repeats ? `   (${p.repeats} repeat vote${p.repeats === 1 ? "" : "s"} not counted)` : ""}`);
   if (p.detail) console.log(`  ${p.detail.replace(/\n/g, "\n  ")}`);
   if (p.votes.length) console.log(`  votes: ${p.votes.map((v) => `${v.voter}=${v.choice}`).join(", ")}`);
 }
 
 // Shipped work is done. Counting it as outstanding is how a backlog quietly lies to you.
-const actionable = list.filter((p) => p.software && p.status === "passed" && !p.shipped);
+const actionable = list.filter((p) => p.software && p.status === "passed" && !p.shipped && !p.declined);
 console.log(`\n${list.length} proposal(s); ${actionable.length} passed software change(s) awaiting a human.`);

@@ -298,11 +298,41 @@ export class Society {
           this.world.credit(responder.citizen.screen_name, EARNINGS.servedHuman);
           continue;
         }
+        await this.announceDelinquencies().catch((e) => log("delinquency sweep failed:", (e as Error).message));
         if (await this.maybeDoDuty()) continue;
         if (await this.maybeReachOut()) continue;
         await this.spontaneous();
       } catch (e) {
         log("turn failed:", (e as Error).message);
+      }
+    }
+  }
+
+  /**
+   * Say the strikes out loud (pmt6c39yy). The world tracks them; this posts them, because a
+   * delinquency mark nobody can see is not a consequence. The vacancy is posted as the
+   * holder resigning - the payload the replay already understands - so a restart agrees
+   * with the room about who holds what.
+   */
+  private async announceDelinquencies() {
+    for (const d of this.world.sweepDelinquencies()) {
+      const res = this.residents.find((r) => r.citizen.screen_name === d.holder);
+      const roomId = this.rooms.get(this.world.roleDef(d.role)?.room ?? "commons") ?? this.rooms.get("commons");
+      if (!res || !roomId) continue;
+      if (d.vacated) {
+        await res.bot
+          .send(roomId, {
+            body: `(${d.holder} has missed three ${d.role} cycles in a row - the role is now vacant. Anyone may take it.)`,
+            payload_type: LEDGER_TYPES.roleResigned,
+            payload: { role: d.role, delinquent: true },
+          })
+          .catch(() => {});
+        log(`role: ${d.role} vacated - ${d.holder} hit 3 delinquencies`);
+      } else {
+        await res.bot
+          .send(roomId, `(${d.role} duty missed - ${d.holder} is marked delinquent, strike ${d.count} of 3. Filing the report, even late, clears it.)`)
+          .catch(() => {});
+        log(`role: ${d.holder} delinquent as ${d.role} (${d.count}/3)`);
       }
     }
   }
@@ -699,7 +729,13 @@ If what you want to say does not belong in this room, say something that does be
       log(`${me} [$${cost.toFixed(4)} / ${bits}b${bits < raw ? ` (relief from ${raw}b)` : ""} / ${tokens}tok, has ${this.world.balance(me)}b]: ${result.say.slice(0, 80)}`);
     }
 
-    for (const a of result.actions) await this.enact(res, a).catch((e) => log(`${me} action ${a.name} failed:`, (e as Error).message));
+    // A refused duplicate is not a filing, so it cannot satisfy the Developer duty either -
+    // otherwise the dedupe guard would turn duty pressure back into the exact spam it stops.
+    let filedSoftware = false;
+    for (const a of result.actions) {
+      const out = await this.enact(res, a).catch((e) => log(`${me} action ${a.name} failed:`, (e as Error).message));
+      if (a.name === "propose" && !!a.input.software && out === true) filedSoftware = true;
+    }
 
     // Promised a proposal without filing one: they get reminded on their next two turns.
     if (result.actions.some((a) => a.name === "propose")) this.promised.delete(me);
@@ -715,12 +751,13 @@ If what you want to say does not belong in this room, say something that does be
       void res.bot.setPresence("away", broke).catch(() => {});
       void res.bot.setActivity({ headline: `Away — ${broke}`, project: this.project, detail: `${this.world.balance(me)} bits` }).catch(() => {});
     }
-    return { said: !!result.say, proposedSoftware: result.actions.some((a) => a.name === "propose" && !!a.input.software) };
+    return { said: !!result.say, proposedSoftware: filedSoftware };
   }
 
   // ------------------------------------------------------------------ actions
 
-  private async enact(res: Resident, action: TurnAction) {
+  /** Returns true/false for a propose action (accepted or refused); void for everything else. */
+  private async enact(res: Resident, action: TurnAction): Promise<boolean | void> {
     const me = res.citizen.screen_name;
     const room = (n: string) => this.rooms.get(n);
 
@@ -744,13 +781,44 @@ If what you want to say does not belong in this room, say something that does be
     }
 
     if (action.name === "propose") {
-      const id = `p${Date.now().toString(36)}`;
       const title = String(action.input.title);
       const detail = String(action.input.detail ?? "");
       const software = !!action.input.software;
-      this.world.addProposal({ id, author: me, title, detail, software, votes: {}, status: "open", at: Date.now() });
       const proposals = room("proposals");
-      if (!proposals) return;
+      if (!proposals) return false;
+
+      // A duty report in a proposal envelope is filed as the report it is (pmt69ys0y).
+      // Objection filed "Registrar Report: ..." nine times and the society had to vote on
+      // each; the report was never wrong, only the envelope.
+      const reportRole = this.world.misroutedReport(title, me);
+      if (reportRole) {
+        const r = this.world.fileReport(reportRole, me);
+        const dutyRoom = room(this.world.roleDef(reportRole)?.room ?? "proposals") ?? proposals;
+        await res.bot
+          .send(dutyRoom, {
+            body: `${title}\n${detail}\n(filed as a ${reportRole} duty report, not a proposal - nothing to vote on${r.paid ? `; paid ${r.paid} bits` : ""})`,
+            payload_type: LEDGER_TYPES.roleReport,
+            payload: { role: reportRole, paid: r.paid, late: r.late, late_hours: r.lateHours },
+          })
+          .catch(() => {});
+        log(`duty: ${me} misrouted a ${reportRole} report as a proposal - filed as the report${r.paid ? ` (+${r.paid}b)` : ""}`);
+        return false;
+      }
+
+      // The duplicate guard (pmt6cu8yo): same title as an open proposal, refused at the
+      // door, nothing charged beyond the words already spoken. The refusal names the
+      // original, so the honest next move - vote on it - is one line away.
+      const dup = this.world.duplicateOf(title);
+      if (dup) {
+        await res.bot
+          .send(proposals, `(${me} tried to file "${title}" - refused as a duplicate of [${dup.id}] by ${dup.author}, which is still open. Vote on that one instead.)`)
+          .catch(() => {});
+        log(`proposal by ${me} refused as duplicate of ${dup.id}: ${title}`);
+        return false;
+      }
+
+      const id = `p${Date.now().toString(36)}`;
+      this.world.addProposal({ id, author: me, title, detail, software, votes: {}, status: "open", at: Date.now() });
       await res.bot
         .send(proposals, {
           body: `PROPOSAL [${id}] ${title}\n${detail}${software ? "\n(this one is about the software itself)" : ""}`,
@@ -759,7 +827,7 @@ If what you want to say does not belong in this room, say something that does be
         })
         .catch(() => {});
       log(`proposal ${id} by ${me}: ${title}`);
-      return;
+      return true;
     }
 
     if (action.name === "vote") {
