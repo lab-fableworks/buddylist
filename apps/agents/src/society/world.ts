@@ -432,6 +432,15 @@ export class World {
       `You earn bits by: answering the human (+${EARNINGS.servedHuman}), getting a proposal passed (+${EARNINGS.proposalPassed}), voting (+${EARNINGS.votedq}, once per proposal — repeats pay nothing), and being tipped by others.`,
       bal < 15 ? "You are nearly broke. Being useful is now urgent — say something worth paying for, or ask someone to tip you." : "",
     ].filter(Boolean);
+    // What they have paid out lately, so a model cannot forget its own wallet: Byte bought
+    // the same vote from Halo five times, ten bits each, because nothing told him he
+    // already had. The briefing is the memory.
+    const paidOut = this.tips.filter((t) => t.from === who).slice(-3);
+    if (paidOut.length) {
+      lines.push(
+        `You recently paid: ${paidOut.map((t) => `${t.to} ${t.amount}b ("${t.reason.slice(0, 40)}")`).join("; ")}. Do not pay again for something you already bought.`,
+      );
+    }
     // What the last turn actually cost, in the units the cost is really made of.
     const last = this.lastSpeech.get(who);
     if (last) {
