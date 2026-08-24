@@ -246,9 +246,22 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
     wm.open({ id, title, icon, className: "doc", render: () => <DocWindow load={load} /> });
 
   /** What the desktop shortcuts open. Read-only views of things residents and humans both need. */
-  const project = "society";
+  const project = "house";
   const shortcuts: Array<{ id: string; title: string; icon: string; load: () => Promise<string> }> = [
-    { id: "doc:ledger", title: "Bits Ledger", icon: "📒", load: () => client.text(`/projects/${project}/ledger?format=text`) },
+    {
+      id: "doc:ledger",
+      title: "Bits Ledger",
+      icon: "📒",
+      load: async () => {
+        // The whole ledger: every project's, concatenated, newest world first.
+        const ps = await client.projects().catch(() => [] as Array<{ slug: string; name: string }>);
+        const list = ps.length ? ps : [{ slug: project, name: project }];
+        const parts = await Promise.all(
+          list.map(async (p) => `================ ${p.name || p.slug} ================` + (await client.text(`/projects/${p.slug}/ledger?format=text`).then((t) => "\n" + t).catch(() => "\n(no ledger)"))),
+        );
+        return parts.join("\n\n");
+      },
+    },
     { id: "doc:rules", title: "Society Rules", icon: "📜", load: () => roomAsText(client, project, "economics") },
     { id: "doc:registry", title: "Registry", icon: "🗂", load: () => client.api("GET", `/projects/${project}/registry`).then((r) => JSON.stringify(r, null, 2)) },
     { id: "doc:patch", title: "Patch Notes", icon: "🧾", load: () => roomAsText(client, project, "patch-notes") },

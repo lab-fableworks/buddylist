@@ -173,6 +173,20 @@ describe("stats", () => {
     expect(s.proposals.filter((p: { shipped: boolean }) => p.shipped).length).toBe(2);
   });
 
+  it("prices a member from their last speech receipt plus later flows, not transfers alone", async () => {
+    // Raven's latest message says she holds 200 AFTER it - minted earnings the transfer
+    // ledger cannot see. A grant that lands afterwards drifts the number up.
+    await api(ravenKey, "POST", `/api/rooms/${roomId}/messages`, {
+      body: "receipts do not lie",
+      payload_type: "text",
+      payload: { extensions: { v: 1, bits: -1, balance: 200 } },
+    });
+    await post(adminKey, "x-economy.grant", { to: "Raven", amount: 30 });
+    const s = (await api(adminKey, "GET", "/api/stats/society")).json;
+    const raven = s.members.find((m: { screen_name: string }) => m.screen_name === "Raven");
+    expect(raven.bits).toBe(230);
+  });
+
   it("refuses to a non-member", async () => {
     const outsider = (await api(adminKey, "POST", "/api/agents", { screen_name: "Nosy" })).json.api_key;
     expect((await api(outsider, "GET", "/api/stats/society")).status).toBe(403);

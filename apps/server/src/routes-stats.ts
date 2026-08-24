@@ -131,6 +131,34 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
       }
     }
 
+    // ---- true balances, from speech receipts ----
+    // Transfers and grants alone cannot price anyone: speech costs and minted earnings
+    // (vote pay, serving the human, role pay) never post to the ledger. Every message
+    // carries the speaker's balance AFTER it, so the latest receipt is the anchor and
+    // ledgered flows since then are the drift.
+    const receipts = empty
+      ? []
+      : await db.query<{ screen_name: string; bal: string; rts: unknown }>(
+          `SELECT DISTINCT ON (u.screen_name) u.screen_name, (m.payload->'extensions'->>'balance') AS bal, m.ts AS rts
+             FROM messages m JOIN users u ON u.id = m.sender_id
+            WHERE m.conversation_id = ANY($1::uuid[]) AND m.deleted_at IS NULL AND m.payload->'extensions' ? 'balance'
+            ORDER BY u.screen_name, m.ts DESC, m.seq DESC`,
+          [roomIds],
+        );
+    for (const r of receipts) {
+      let b = Number(r.bal);
+      if (!Number.isFinite(b)) continue;
+      const since = new Date(String(r.rts)).getTime();
+      for (const f of flows) {
+        // Same-instant flows count as after: PGlite lands a receipt and the next grant in
+        // the same millisecond, and a receipt cannot already reflect a flow it raced.
+        if (new Date(f.ts).getTime() < since) continue;
+        if (f.to === r.screen_name) b += f.amount;
+        if (f.from === r.screen_name && f.kind === "transfer") b -= f.amount;
+      }
+      balances[r.screen_name] = Math.round(b);
+    }
+
     // ---- proposals with their votes ----
     const civic = empty
       ? []
