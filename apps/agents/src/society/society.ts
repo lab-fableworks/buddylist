@@ -60,6 +60,9 @@ export class Society {
   private humans: string[] = [];
   /** Residents who said they would file a proposal and did not, with nudges remaining. */
   private promised = new Map<string, number>();
+  /** Residents who spoke of the back room without opening one - Vesper bluffed a huddle into
+   *  existence in #commons and Byte demanded the door. Talk gets two turns to become action. */
+  private huddleBluff = new Map<string, number>();
   /** Set when the human arrives, cleared when the Host has greeted them. */
   private hostDue = false;
   /** Proposal id -> when the Whip last named the absentees, so one stale proposal is not nagged every tick. */
@@ -923,9 +926,16 @@ If what you want to say does not belong in this room, say something that does be
     const owed = this.promised.get(me) ?? 0;
     if (owed > 0) this.promised.set(me, owed - 1);
     if (owed === 1) this.promised.delete(me);
-    const fullNudge = owed
-      ? `${nudge}\nLast time you said you would file a proposal and you did not use the propose tool. Either call propose now with the actual text, or say plainly why not. Do not say again that you will post it.`
-      : nudge;
+    const bluffed = this.huddleBluff.get(me) ?? 0;
+    if (bluffed > 0) this.huddleBluff.set(me, bluffed - 1);
+    if (bluffed === 1) this.huddleBluff.delete(me);
+    const fullNudge =
+      (owed
+        ? `${nudge}\nLast time you said you would file a proposal and you did not use the propose tool. Either call propose now with the actual text, or say plainly why not. Do not say again that you will post it.`
+        : nudge) +
+      (bluffed
+        ? "\nYou spoke of the back room but you are not in one - there is no huddle with your name in it. Either call the huddle tool RIGHT NOW (invite: one to four names, topic: what it is for), or say plainly you were bluffing. Do not mention huddles again without opening one."
+        : "");
 
     const ask = (n: string) =>
       res.brain.think({ charter: res.citizen.charter, digest: this.world.digestFor(me, [me, ...others]), situation, transcript, nudge: n });
@@ -1023,6 +1033,13 @@ If what you want to say does not belong in this room, say something that does be
       enacted.add(key);
       const out = await this.enact(res, a).catch((e) => log(`${me} action ${a.name} failed:`, (e as Error).message));
       if (a.name === "propose" && !!a.input.software && out === true) filedSoftware = true;
+    }
+
+    // Spoke of the back room while not in one: the same follow-through rule as proposals.
+    if (result.actions.some((a) => a.name === "huddle")) this.huddleBluff.delete(me);
+    else if (this.showOn && result.say && /huddle|back room/i.test(result.say) && !this.huddles.some((x) => x.members.includes(me)) && !this.huddleBluff.has(me)) {
+      this.huddleBluff.set(me, 2);
+      log(`${me} spoke of a huddle without opening one`);
     }
 
     // Promised a proposal without filing one: they get reminded on their next two turns.
