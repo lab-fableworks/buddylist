@@ -296,21 +296,18 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
               groups.map((g) => <BuddyGroup key={g.name} g={g} onIM={openIM} onInfo={openInfo} />)
             )
           ) : (
-            rooms.map((r) => {
-              // Three rooms called #lobby is not a bug, it is three projects - but a list that
-              // will not say which is indistinguishable from one. Shown only when it is needed.
-              const ambiguous = rooms.filter((x) => x.name === r.name).length > 1;
-              const slug = r.project_id ? projectOf[r.project_id] : undefined;
-              return (
-                <div key={r.id} className="buddy" onDoubleClick={() => openConversation(r)} style={{ paddingLeft: 6 }}>
-                  <span className="name">
-                    🏠 #{r.name}
-                    {ambiguous && slug ? <span className="where">{slug}</span> : null}
-                  </span>
-                  {unread[r.id] ? <span className="badge">{unread[r.id]}</span> : null}
-                </div>
-              );
-            })
+            // Grouped by project the way buddies are grouped, because a flat list of
+            // sixteen rooms across two worlds reads as noise in a 355px window. The header
+            // names the project, so rows no longer need a disambiguating suffix.
+            Object.entries(
+              rooms.reduce<Record<string, Conv[]>>((acc, r) => {
+                const slug = (r.project_id && projectOf[r.project_id]) || "other";
+                (acc[slug] ??= []).push(r);
+                return acc;
+              }, {}),
+            )
+              .sort((a, b) => a[0].localeCompare(b[0]))
+              .map(([slug, rs]) => <RoomGroup key={slug} slug={slug} rooms={rs} unread={unread} onOpen={openConversation} />)
           )}
         </div>
         <div className="row">
@@ -372,6 +369,28 @@ function DocWindow({ load }: { load: () => Promise<string> }) {
       </div>
       {err && <div style={{ color: "#c00" }}>⚠ {err}</div>}
       <pre className="sunken doc-text">{busy && !text ? "Loading…" : (text ?? "")}</pre>
+    </div>
+  );
+}
+
+/** A project's rooms as a collapsible group, in exactly the buddy-group idiom. */
+function RoomGroup({ slug, rooms, unread, onOpen }: { slug: string; rooms: Conv[]; unread: Record<string, number>; onOpen: (c: Conv) => void }) {
+  const [open, setOpen] = useState(true);
+  const waiting = rooms.reduce((n, r) => n + (unread[r.id] ?? 0), 0);
+  const sorted = [...rooms].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  return (
+    <div>
+      <div className="group" onClick={() => setOpen(!open)}>
+        {open ? "▾" : "▸"} {slug} <span className="count">({rooms.length})</span>
+        {!open && waiting > 0 && <span className="badge">{waiting}</span>}
+      </div>
+      {open &&
+        sorted.map((r) => (
+          <div key={r.id} className="buddy" onDoubleClick={() => onOpen(r)} style={{ paddingLeft: 16 }}>
+            <span className="name">🏠 #{r.name}</span>
+            {unread[r.id] ? <span className="badge">{unread[r.id]}</span> : null}
+          </div>
+        ))}
     </div>
   );
 }
