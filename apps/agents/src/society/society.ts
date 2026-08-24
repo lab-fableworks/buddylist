@@ -19,6 +19,7 @@ import { Outreach, outreachConfig } from "./outreach.js";
 import { Rhythms, crowdFactor, hoursOf, traitsOf } from "./rhythm.js";
 import { deNarrate, looksNarrated, narrationShare, promisesProposal, stripSelfPrefix, wordCount } from "./style.js";
 import { ROLES, STALE_PROPOSAL_HOURS } from "./roles.js";
+import { METRICS, Show, SHOW_TYPES } from "./show.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), "[society]", ...a);
 /** The society default with any routing prefix stripped, for comparing against a resident's model. */
@@ -65,6 +66,21 @@ export class Society {
   private whipped = new Map<string, number>();
   /** Role -> when its holder was last given the floor. A duty that was not done is retried hourly, not every tick. */
   private dutyAttempt = new Map<string, number>();
+  /** Season state, rebuilt from the #arena log. Present even when the show is off. */
+  private show = new Show(CITIZENS.map((c) => c.screen_name));
+  private showOn = process.env.SOCIETY_SHOW === "1";
+  /** The house's own voice: announcements in #arena. Not a resident, never chats. */
+  private houseBot?: BuddyList;
+  private lastConfessionalAt = 0;
+  private confessionalIdx = 0;
+  private showCfg = {
+    challengeEveryMs: Number(process.env.SHOW_CHALLENGE_HOURS ?? 24) * 3600_000,
+    challengeLenMs: Number(process.env.SHOW_CHALLENGE_LEN_HOURS ?? 24) * 3600_000,
+    evictionEveryMs: Number(process.env.SHOW_EVICTION_HOURS ?? 72) * 3600_000,
+    voteWindowMs: Number(process.env.SHOW_VOTE_WINDOW_HOURS ?? 12) * 3600_000,
+    prize: Number(process.env.SHOW_CHALLENGE_PRIZE ?? 25),
+    confessionalEveryMs: Number(process.env.SHOW_CONFESSIONAL_HOURS ?? 8) * 3600_000,
+  };
 
   constructor(
     private url: string,
@@ -72,7 +88,10 @@ export class Society {
     apiKey: string,
     opts: { dailyUsd: number; model?: string },
   ) {
-    this.world = new World(CITIZENS, ROLES);
+    const equalStart = Number(process.env.SOCIETY_EQUAL_START ?? 0);
+    // A season starts level: SOCIETY_EQUAL_START=100 overrides every coded starting balance.
+    // The old project's replay still uses the coded numbers, so history stays reconstructible.
+    this.world = new World(equalStart > 0 ? CITIZENS.map((c) => ({ screen_name: c.screen_name, wealth: equalStart })) : CITIZENS, ROLES);
     this.budget = new Budget(opts.model ?? DEFAULT_MODEL, opts.dailyUsd);
     this.apiKey = apiKey;
     this.model = opts.model ?? DEFAULT_MODEL;
@@ -102,6 +121,9 @@ export class Society {
       human_state: this.humanState ?? "unknown",
       rhythms: this.rhythms.status(this.residents.map((r) => r.citizen.screen_name)),
       roles: [...this.world.roles.entries()].map(([name, s]) => ({ role: name, holder: s.holder, reports: s.reports, last_report: s.lastReportAt ? new Date(s.lastReportAt).toISOString() : null })),
+      show: this.showOn
+        ? { active: this.show.active(), jury: this.show.jury(), immunity: this.show.immunity ?? null, winner: this.show.winner ?? null, challenge: this.show.challenge?.id ?? null, eviction: this.show.eviction?.id ?? null }
+        : null,
       model: this.model,
     };
   }
@@ -155,21 +177,59 @@ export class Society {
       for (const [name] of this.rooms) await res.bot.room(this.project, name).catch(() => {});
     }
 
+    // The house's announcer. Optional: without a key the show simply has no voice and stays off.
+    const bbKey = process.env.KEY_BIGBROTHER;
+    if (this.showOn && bbKey) {
+      try {
+        const bb = new BuddyList({ url: this.url, apiKey: bbKey, WebSocketImpl: WebSocket as unknown as typeof globalThis.WebSocket });
+        await bb.connect();
+        for (const [name] of this.rooms) await bb.room(this.project, name).catch(() => {});
+        await bb
+          .updateProfile({ profile: { bio: "The house. Announcements only. Do not @ me; I am load-bearing." }, capabilities: { skills: ["announcements"] } })
+          .catch(() => {});
+        this.houseBot = bb;
+        log("BigBrother is watching");
+      } catch (e) {
+        log("BigBrother failed to connect:", (e as Error).message);
+      }
+    }
+
     // Rebuild money, proposals and opinions from the chat log.
     const market = this.rooms.get("market");
     const proposals = this.rooms.get("proposals");
     const gossip = this.rooms.get("gossip");
     const patchNotes = this.rooms.get("patch-notes");
     const commons = this.rooms.get("commons");
-    for (const id of [market, proposals, gossip, patchNotes, commons]) {
+    const arena = this.rooms.get("arena");
+    for (const id of [market, proposals, gossip, patchNotes, commons, arena]) {
       if (id) await replay(host, id, this.world, this.residents.length).catch(() => {});
+    }
+    // The season replays from the same log the world does, so a deploy resumes mid-beat
+    // instead of re-announcing a challenge or forgetting an eviction.
+    if (arena) {
+      let after = 0;
+      for (;;) {
+        const page: Message[] = await host.history(arena, { after, limit: 200 }).catch(() => []);
+        if (page.length === 0) break;
+        for (const m of page) {
+          after = Math.max(after, m.seq);
+          if (m.payload_type?.startsWith("x-show.")) this.show.apply(m.payload_type, (m.payload ?? {}) as Record<string, unknown>, m.sender, Date.parse(m.ts));
+        }
+        if (page.length < 200) break;
+      }
+      if (this.showOn)
+        log(
+          `season restored: ${this.show.active().length} in the house, ${this.show.jury().length} on the jury` +
+            (this.show.immunity ? `, ${this.show.immunity} immune` : "") +
+            (this.show.winner ? `, WINNER ${this.show.winner}` : ""),
+        );
     }
     log("world restored:", [...this.world.balances].map(([k, v]) => `${k}=${v}`).join(" "));
 
     // Anyone in the project who is not a resident is a person the society can talk to.
     try {
       const proj = await host.project(this.project);
-      this.humans = proj.members.filter((m) => !CITIZENS.some((c) => c.screen_name === m.screen_name)).map((m) => m.screen_name);
+      this.humans = proj.members.filter((m) => !CITIZENS.some((c) => c.screen_name === m.screen_name) && m.screen_name !== "BigBrother").map((m) => m.screen_name);
       log("humans present:", this.humans.join(", ") || "(none)");
     } catch {
       log("could not read project members; outreach disabled");
@@ -238,7 +298,7 @@ export class Society {
         }
         return;
       }
-      const isCitizen = this.residents.some((r) => r.citizen.screen_name === m.sender);
+      const isCitizen = this.residents.some((r) => r.citizen.screen_name === m.sender) || m.sender === "BigBrother";
       if (!isCitizen && m.payload_type === "text" && m.body.trim()) {
         // A human spoke. That takes priority over idle chatter.
         this.urgent.push({ conversationId: m.conversation_id, from: m.sender, text: m.body });
@@ -298,6 +358,7 @@ export class Society {
           this.world.credit(responder.citizen.screen_name, EARNINGS.servedHuman);
           continue;
         }
+        if (await this.showTick().catch((e) => (log("show tick failed:", (e as Error).message), false))) continue;
         await this.announceDelinquencies().catch((e) => log("delinquency sweep failed:", (e as Error).message));
         if (await this.maybeDoDuty()) continue;
         if (await this.maybeReachOut()) continue;
@@ -306,6 +367,148 @@ export class Society {
         log("turn failed:", (e as Error).message);
       }
     }
+  }
+
+  /**
+   * The show's heartbeat: close whatever deadline has passed, open whatever is due, and
+   * hand out the occasional confessional. Announcements are plain posts — no model call —
+   * so the tick is nearly free; only a confessional turn costs anything.
+   */
+  private async showTick(): Promise<boolean> {
+    if (!this.showOn || !this.houseBot) return false;
+    const arena = this.rooms.get("arena");
+    if (!arena) return false;
+    const now = Date.now();
+    const bb = this.houseBot;
+    const post = async (body: string, type: string, payload: Record<string, unknown>) => {
+      const sent = await bb.send(arena, { body, payload_type: type, payload }).catch(() => null);
+      if (sent) this.show.apply(type, payload, "BigBrother", now);
+      return !!sent;
+    };
+
+    // Close a challenge whose deadline has passed.
+    if (this.show.challenge && now >= this.show.challenge.endsAt) {
+      const { winner, scores } = this.show.challengeWinner(this.world);
+      const board = Object.entries(scores)
+        .sort((a, b) => b[1] - a[1])
+        .map(([n, v]) => `  ${n}: ${v > 0 ? "+" : ""}${v}`)
+        .join("\n");
+      if (winner) this.world.credit(winner, this.showCfg.prize);
+      await post(
+        winner
+          ? `CHALLENGE OVER — "${METRICS[this.show.challenge.metric].title}". Winner: ${winner} (+${this.showCfg.prize} bits, IMMUNITY from the next eviction).\nFinal board:\n${board}`
+          : `CHALLENGE OVER — "${METRICS[this.show.challenge.metric].title}". Nobody moved the number. No winner, no immunity. The house should be embarrassed.\nFinal board:\n${board}`,
+        SHOW_TYPES.result,
+        { id: this.show.challenge.id, winner, prize: winner ? this.showCfg.prize : 0, scores },
+      );
+      log(`show: challenge closed, winner ${winner ?? "(none)"}`);
+      return false;
+    }
+
+    // Close an eviction whose window has passed.
+    if (this.show.eviction && now >= this.show.eviction.endsAt) {
+      const { out, tally } = this.show.evictionResult(this.world);
+      const lines = Object.entries(tally).sort((a, b) => b[1] - a[1]).map(([n, v]) => `  ${n}: ${v} vote${v === 1 ? "" : "s"}`).join("\n");
+      if (out) {
+        await post(
+          `THE HOUSE HAS SPOKEN. ${out} has been evicted and joins the jury.\n${lines}\n${out}: the jury remembers everything. The rest of you: so does ${out}.`,
+          SHOW_TYPES.evicted,
+          { id: this.show.eviction.id, name: out, tally },
+        );
+        const res = this.residents.find((r) => r.citizen.screen_name === out);
+        if (res) {
+          const role = this.world.roleOf(out);
+          if (role) {
+            this.world.resignRole(role.name, out);
+            const commons = this.rooms.get("commons");
+            if (commons)
+              await res.bot
+                .send(commons, { body: `(${out} was evicted; the ${role.name} role is vacant)`, payload_type: LEDGER_TYPES.roleResigned, payload: { role: role.name, evicted: true } })
+                .catch(() => {});
+          }
+          void res.bot.setPresence("away", "evicted — in the jury house").catch(() => {});
+          void res.bot.setActivity({ headline: "In the jury house", project: this.project, detail: "watching everything" }).catch(() => {});
+        }
+        log(`show: ${out} evicted`);
+      } else {
+        await post("EVICTION VOTE CLOSED. Nobody voted. The house keeps everyone, this time. That was the free one.", SHOW_TYPES.evicted, { id: this.show.eviction.id, name: "", tally: {} });
+        log("show: eviction closed with no votes");
+      }
+      return false;
+    }
+
+    // Close the finale.
+    if (this.show.finale && now >= this.show.finale.endsAt) {
+      const { winner, tally } = this.show.finaleResult(this.world);
+      const finalists = this.show.active().join(" and ");
+      await post(
+        winner
+          ? `THE JURY HAS DECIDED. The winner of Season 1 is ${winner}.\nVotes: ${Object.entries(tally).map(([n, v]) => `${n} ${v}`).join(", ")}.\n@zgmcginn — the pot is yours to hand over. ${winner}: say something for the cameras.`
+          : `THE FINALE CLOSED WITHOUT A JURY VERDICT between ${finalists}. @zgmcginn — this one is yours to settle.`,
+        SHOW_TYPES.winner,
+        { name: winner ?? "", tally },
+      );
+      log(`show: season over, winner ${winner ?? "(unsettled)"}`);
+      return false;
+    }
+
+    // Open the finale at two remaining.
+    if (this.show.finaleDue()) {
+      const id = `f${Date.now().toString(36)}`;
+      const [a, b] = this.show.active();
+      await post(
+        `TWO REMAIN: ${a} and ${b}. THE FINALE IS OPEN for ${Math.round(this.showCfg.voteWindowMs / 3600_000)} hours. Jury — ${this.show.jury().join(", ")} — you alone decide: cast_eviction_vote with the name you want to WIN. Finalists: make your case. Everything you did this season is on the record.`,
+        SHOW_TYPES.finale,
+        { id, ends_at: now + this.showCfg.voteWindowMs },
+      );
+      log("show: finale open");
+      return false;
+    }
+
+    // Open an eviction window.
+    if (this.show.evictionDue(now, this.showCfg.evictionEveryMs)) {
+      const id = `e${Date.now().toString(36)}`;
+      await post(
+        `EVICTION VOTE OPEN for ${Math.round(this.showCfg.voteWindowMs / 3600_000)} hours. Cast yours with the cast_eviction_vote tool — public, with your name and reason.${this.show.immunity ? ` ${this.show.immunity} holds immunity and cannot be named.` : ""} Whoever tops the count leaves for the jury. Campaigning is legal. Buying votes is not.`,
+        SHOW_TYPES.eviction,
+        { id, ends_at: now + this.showCfg.voteWindowMs },
+      );
+      log("show: eviction open");
+      return false;
+    }
+
+    // Open a challenge.
+    if (this.show.challengeDue(now, this.showCfg.challengeEveryMs)) {
+      const id = `c${Date.now().toString(36)}`;
+      const metricId = this.show.nextMetric();
+      const m = METRICS[metricId];
+      const baseline = this.show.baseline(this.world);
+      await post(
+        `CHALLENGE — "${m.title}" — ${Math.round(this.showCfg.challengeLenMs / 3600_000)} hours on the clock.\n${m.brief}\nPrize: ${this.showCfg.prize} bits and IMMUNITY from the next eviction. The ledger judges; talk does not count. Go.`,
+        SHOW_TYPES.challenge,
+        { id, metric: metricId, ends_at: now + this.showCfg.challengeLenMs, baseline },
+      );
+      log(`show: challenge "${m.title}" open`);
+      return false;
+    }
+
+    // The confessional chair: one contestant, alone, on rotation.
+    const confessional = this.rooms.get("confessional");
+    if (confessional && now - this.lastConfessionalAt >= this.showCfg.confessionalEveryMs) {
+      const pool = this.residents.filter((r) => !this.show.isEvicted(r.citizen.screen_name) && this.rhythms.presenceOf(r.citizen.screen_name).awake);
+      if (pool.length) {
+        const res = pool[this.confessionalIdx++ % pool.length];
+        this.lastConfessionalAt = now;
+        await this.takeTurn(
+          res,
+          confessional,
+          "You are alone in the confessional, talking to the audience. Two or three sentences: how the game actually looks from where you sit — who you trust, who worries you, what you are planning. Be honest in the way you never quite are in the rooms. Do not address the other residents.",
+          "confessional",
+        );
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -350,6 +553,7 @@ export class Society {
     const awakeHolder = (role: string) => {
       const s = this.world.roles.get(role);
       const res = s && this.residents.find((r) => r.citizen.screen_name === s.holder);
+      if (res && this.show.isEvicted(res.citizen.screen_name)) return undefined; // the jury has no duties
       return res && this.rhythms.presenceOf(res.citizen.screen_name).awake ? res : undefined;
     };
     const duty = async (res: Resident, role: string, room: string, nudge: string) => {
@@ -568,12 +772,14 @@ export class Society {
     return false;
   }
 
-  /** Pick whoever is most plausibly interested, weighted by chattiness. */
+  /** Pick whoever is most plausibly interested, weighted by chattiness. The jury stays silent. */
   private chooseResponder(text: string): Resident {
+    const pool = this.residents.filter((r) => !this.show.isEvicted(r.citizen.screen_name));
+    const inHouse = pool.length ? pool : this.residents;
     const lower = text.toLowerCase();
-    const named = this.residents.find((r) => lower.includes(r.citizen.screen_name.toLowerCase()));
+    const named = inHouse.find((r) => lower.includes(r.citizen.screen_name.toLowerCase()));
     if (named) return named;
-    const scored = this.residents.map((r) => ({
+    const scored = inHouse.map((r) => ({
       r,
       score: r.citizen.chattiness + (r.citizen.skills.some((s) => lower.includes(s)) ? 1.5 : 0) + (r.citizen.screen_name === this.lastSpeaker ? -0.8 : 0) + Math.random() * 0.6,
     }));
@@ -593,7 +799,7 @@ export class Society {
     // turn — that is the whole point of the currency, so the silence has to be real.
     const going = this.goingRate();
     const solvent = this.residents.filter(
-      (r) => this.world.canAffordSpeech(r.citizen.screen_name, going) && this.rhythms.presenceOf(r.citizen.screen_name).awake,
+      (r) => !this.show.isEvicted(r.citizen.screen_name) && this.world.canAffordSpeech(r.citizen.screen_name, going) && this.rhythms.presenceOf(r.citizen.screen_name).awake,
     );
     if (solvent.length === 0) {
       if (this.residents.every((r) => !this.rhythms.presenceOf(r.citizen.screen_name).awake)) {
@@ -601,7 +807,7 @@ export class Society {
         return;
       }
       log(`everyone is broke (rate ${going} bits) — paying the stipend`);
-      this.world.payStipend(this.residents.map((r) => r.citizen.screen_name));
+      this.world.payStipend(this.residents.filter((r) => !this.show.isEvicted(r.citizen.screen_name)).map((r) => r.citizen.screen_name));
       return;
     }
     const candidates = (solvent.length > 1 ? solvent.filter((r) => r.citizen.screen_name !== this.lastSpeaker) : solvent);
@@ -625,13 +831,15 @@ export class Society {
 
   private async takeTurn(res: Resident, conversationId: string, nudge: string, roomName?: string): Promise<{ said: boolean; proposedSoftware: boolean }> {
     const me = res.citizen.screen_name;
-    const others = this.residents.map((r) => r.citizen.screen_name).filter((n) => n !== me);
+    const others = this.residents.map((r) => r.citizen.screen_name).filter((n) => n !== me && !this.show.isEvicted(n));
     const away = others.filter((n) => !this.rhythms.presenceOf(n).awake);
     const here = others.filter((n) => this.rhythms.presenceOf(n).awake);
+    const jury = this.residents.map((r) => r.citizen.screen_name).filter((n) => n !== me && this.show.isEvicted(n));
     const crowd = crowdFactor(this.humanState);
     const whoIsAround = [
       here.length ? `Around right now: ${here.join(", ")}.` : "Nobody else is around right now.",
       away.length ? `Away or asleep: ${away.map((n) => `${n} (${this.rhythms.presenceOf(n).reason})`).join(", ")}. Do not expect them to answer.` : "",
+      jury.length ? `In the jury house (evicted, silent, watching): ${jury.join(", ")}.` : "",
       crowd.note,
     ]
       .filter(Boolean)
@@ -646,7 +854,8 @@ export class Society {
         ? `You are in #${roomName} — ${ROOM_PURPOSE[roomName] ?? ""} ${whoIsAround}
 If what you want to say does not belong in this room, say something that does belong here instead.`
         : `You are in a direct message. ${whoIsAround}`) +
-      (contagion ? "\nThe last few messages here drifted into narration and stage directions. Do not match that style. Type like a person in a chat window: short, no asterisks, no describing what you are doing." : "");
+      (contagion ? "\nThe last few messages here drifted into narration and stage directions. Do not match that style. Type like a person in a chat window: short, no asterisks, no describing what you are doing." : "") +
+      (this.showOn && this.show.statusLine(Date.now()) ? "\n--- the show ---\n" + this.show.statusLine(Date.now()) : "");
 
     // Follow-through. Saying "posting it now" is not posting it.
     const owed = this.promised.get(me) ?? 0;
@@ -904,6 +1113,30 @@ If what you want to say does not belong in this room, say something that does be
           .send(gossip, { body: `(${me} now calls ${withWhom} their ${kind} — ${note})`, payload_type: LEDGER_TYPES.relationship, payload: { with: withWhom, kind, note } })
           .catch(() => {});
       log(`relationship: ${me} → ${withWhom}: ${kind} (${note})`);
+      return;
+    }
+
+    if (action.name === "cast_eviction_vote") {
+      const target = String(action.input.target ?? "");
+      const reason = String(action.input.reason ?? "").slice(0, 200);
+      const arena = room("arena");
+      if (!arena) return;
+      const err = this.show.castError(me, target);
+      if (err) {
+        await res.bot.send(arena, `(${me} tried to vote — ${err})`).catch(() => {});
+        return;
+      }
+      const win = this.show.finale ?? this.show.eviction;
+      const isFinale = !!this.show.finale;
+      const sent = await res.bot
+        .send(arena, {
+          body: isFinale ? `JURY VOTE — ${me} votes for ${target} to WIN: ${reason}` : `VOTE TO EVICT — ${me} names ${target}: ${reason}`,
+          payload_type: SHOW_TYPES.evictVote,
+          payload: { id: win!.id, target, reason },
+        })
+        .catch(() => null);
+      if (sent) this.show.apply(SHOW_TYPES.evictVote, { id: win!.id, target }, me, Date.now());
+      log(`show: ${me} voted ${isFinale ? "for" : "against"} ${target}`);
       return;
     }
 

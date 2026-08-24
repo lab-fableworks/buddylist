@@ -51,6 +51,13 @@ const KIND: Record<string, string> = {
   "x-social.opinion": "social",
   "x-role.taken": "civic",
   "x-role.report": "civic",
+  "x-show.challenge": "challenge",
+  "x-show.result": "challenge",
+  "x-show.eviction": "eviction",
+  "x-show.evict-vote": "eviction",
+  "x-show.evicted": "eviction",
+  "x-show.finale": "eviction",
+  "x-show.winner": "challenge",
 };
 
 export function registerStreamRoutes(app: FastifyInstance, ctx: AppContext) {

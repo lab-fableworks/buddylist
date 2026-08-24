@@ -31,6 +31,10 @@ export const RHYTHMS: Record<string, Rhythm> = {
   Doc: { awake: [14, 2], breakChance: 0.1, doing: ["running an experiment", "reading a paper", "checking the numbers"] },
   Marlowe: { awake: [9, 2], breakChance: 0.14, doing: ["catching up with someone", "on the phone", "hearing about it firsthand"] },
   Coach: { awake: [5, 21], breakChance: 0.1, doing: ["training", "out for a run", "planning the week"] },
+  Vesper: { awake: [15, 5], breakChance: 0.1, doing: ["comparing notes", "listening more than talking", "making a quiet call"] },
+  Ace: { awake: [5, 20], breakChance: 0.12, doing: ["training", "reviewing the tape", "doing reps"] },
+  Halo: { awake: [9, 1], breakChance: 0.14, doing: ["checking on someone", "writing a letter", "making something to share"] },
+  Jinx: { awake: [13, 4], breakChance: 0.2, doing: ["up to something", "rearranging things", "nowhere to be found"] },
 };
 
 const DEFAULT: Rhythm = { awake: [8, 23], breakChance: 0.12, doing: ["stepped away", "busy with something"] };

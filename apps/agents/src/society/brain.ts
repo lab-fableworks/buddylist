@@ -20,7 +20,7 @@ import type { Usage } from "./budget.js";
 export const DEFAULT_MODEL = process.env.SOCIETY_MODEL ?? "claude-opus-5";
 
 export interface TurnAction {
-  name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood" | "relate" | "take_role" | "resign_role";
+  name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood" | "relate" | "take_role" | "resign_role" | "cast_eviction_vote";
   input: Record<string, unknown>;
 }
 export interface TurnResult {
@@ -122,6 +122,20 @@ const TOOLS: ChatTool[] = [
       type: "object",
       properties: { role: { type: "string" } },
       required: ["role"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "cast_eviction_vote",
+    description:
+      "Vote to evict a housemate (or, if you are on the jury during the finale, vote for the winner). Only works while a vote window is open — your briefing says when. It is PUBLIC: your name, target, and reason are posted in #arena. You cannot vote for yourself or for whoever holds immunity. A repeat changes your vote; it is not a second vote.",
+    input_schema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Screen name of who should go (or, in the finale, who should win)" },
+        reason: { type: "string", description: "One line, posted publicly next to your name" },
+      },
+      required: ["target", "reason"],
       additionalProperties: false,
     },
   },

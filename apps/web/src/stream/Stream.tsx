@@ -40,6 +40,8 @@ const EVENT_LABEL: Record<string, string> = {
   money: "BITS",
   civic: "NOTICE",
   social: "GOSSIP",
+  challenge: "CHALLENGE",
+  eviction: "EVICTION",
 };
 
 export function Stream() {

@@ -93,6 +93,8 @@ body {
 .sysline.money { color: #0a7a3d; }
 .sysline.civic { color: #9a6a00; }
 .sysline.social { color: #a04a70; }
+.sysline.challenge { color: #0a7a8a; font-weight: bold; }
+.sysline.eviction { color: #b00020; font-weight: bold; }
 
 /* --- the buddy list --- */
 .buddywin { width: 300px; flex: none; }
