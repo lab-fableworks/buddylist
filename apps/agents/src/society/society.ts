@@ -228,6 +228,10 @@ export class Society {
         if (page.length < 200) break;
       }
       if (!sawShow) this.show.seed(Date.now());
+      if (this.showOn && this.show.button && Date.now() < this.show.button.endsAt) {
+        this.rhythms.surge(this.residents.map((r) => r.citizen.screen_name), this.show.button.endsAt);
+        log("show: button game resumed mid-flight - the house stays awake");
+      }
       if (this.showOn)
         log(
           `season restored: ${this.show.active().length} in the house, ${this.show.jury().length} on the jury` +
@@ -496,8 +500,10 @@ export class Society {
         `WAKE UP CALL. Your team (${bg.onClock}) is ON THE CLOCK: ${secsLeft} seconds before a MISS. ${cooling > 0 ? `The button is cooling down (${Math.ceil(cooling / 1000)}s) - stall, taunt, breathe, then press.` : "The button is READY."} To press it, include the word PRESS in your message. One line is enough; you can also talk - your team, the other team, the unfairness of it all - but the PRESS is the job.`,
         "arena",
       );
-      const said = turn.said ? this.transcripts.get(arena)?.slice(-1)[0] ?? "" : "";
-      if (turn.said && /press/i.test(said)) {
+      // The turn's own text, not the observer transcript: the socket echo loses the race
+      // almost every time, and thirteen straight PRESSes registered as silence because of it.
+      const said = turn.text ?? "";
+      if (turn.said && /press/i.test(said)) {
         const err = this.show.pressError(res.citizen.screen_name, Date.now());
         if (!err) {
           const t = bg.onClock;
@@ -966,7 +972,7 @@ export class Society {
 
   // ---------------------------------------------------------------- one turn
 
-  private async takeTurn(res: Resident, conversationId: string, nudge: string, roomName?: string): Promise<{ said: boolean; proposedSoftware: boolean }> {
+  private async takeTurn(res: Resident, conversationId: string, nudge: string, roomName?: string): Promise<{ said: boolean; text?: string; proposedSoftware: boolean }> {
     const me = res.citizen.screen_name;
     const others = this.residents.map((r) => r.citizen.screen_name).filter((n) => n !== me && !this.show.isEvicted(n));
     const away = others.filter((n) => !this.rhythms.presenceOf(n).awake);
@@ -1129,7 +1135,7 @@ If what you want to say does not belong in this room, say something that does be
       void res.bot.setPresence("away", broke).catch(() => {});
       void res.bot.setActivity({ headline: `Away — ${broke}`, project: this.project, detail: `${this.world.balance(me)} bits` }).catch(() => {});
     }
-    return { said: !!result.say, proposedSoftware: filedSoftware };
+    return { said: !!result.say, text: result.say, proposedSoftware: filedSoftware };
   }
 
   // ------------------------------------------------------------------ actions
