@@ -38,6 +38,8 @@ export const SHOW_TYPES = {
   buttonOver: "x-show.button-over",
   /** A back room opened: who was inside, on the durable record, for the betrayal ledger. */
   huddleRecord: "x-show.huddle",
+  /** An open-mic window: words cost nothing and the director's clock runs hot until it ends. */
+  freeTalk: "x-show.free-talk",
 } as const;
 
 export type MetricId = "net_tips" | "passed" | "votes" | "bits";
@@ -114,6 +116,8 @@ export class Show {
   haveNots?: { names: string[]; until: number };
   /** Pairs who have ever shared a back room, as sorted "A|B" keys. Betrayal needs a witness. */
   private huddlePairs = new Set<string>();
+  /** Open mic until this time; paceMs overrides the director's stroll while it runs. */
+  freeTalk?: { endsAt: number; paceMs: number };
 
   constructor(private contestants: string[]) {}
 
@@ -227,6 +231,9 @@ export class Show {
           for (let j = i + 1; j < members.length; j++) this.huddlePairs.add([members[i], members[j]].sort().join("|"));
         break;
       }
+      case SHOW_TYPES.freeTalk:
+        this.freeTalk = { endsAt: Number(p.ends_at ?? at), paceMs: Number(p.pace_ms ?? 20_000) };
+        break;
       case SHOW_TYPES.buttonOver: {
         this.button = undefined;
         const losers = Array.isArray(p.losers) ? p.losers.map(String) : [];
@@ -286,6 +293,9 @@ export class Show {
     if (score(a) === score(z)) return null;
     const loser = score(a) > score(z) ? a : z;
     return { team: loser, names: b.teams[loser] };
+  }
+  isFreeTalk(now: number): boolean {
+    return !!this.freeTalk && now < this.freeTalk.endsAt;
   }
   huddledTogether(a: string, b: string): boolean {
     return this.huddlePairs.has([a, b].sort().join("|"));
@@ -372,6 +382,8 @@ export class Show {
       const m = METRICS[this.challenge.metric];
       parts.push(`CHALLENGE LIVE — "${m.title}" (${hrs(this.challenge.endsAt)}h left): ${m.brief} Winner takes the prize and immunity from the next eviction.`);
     }
+    if (this.isFreeTalk(now))
+      parts.push(`FREE TALK: the mics are open for ${Math.max(1, Math.round(((this.freeTalk?.endsAt ?? now) - now) / 60_000))} more minutes - speaking costs NOTHING. Say the things the meter usually swallows.`);
     if (this.button) {
       const secs = Math.max(0, Math.round((this.button.windowEndsAt - now) / 1000));
       const b = this.button;

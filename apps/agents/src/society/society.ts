@@ -382,7 +382,9 @@ export class Society {
       // Nobody watching means less reason to fill the room — more believable, and cheaper.
       const crowd = crowdFactor(this.humanState);
       const waitS = this.budget.paceSeconds(Number(process.env.SOCIETY_MIN_INTERVAL_S ?? 25)) * crowd.multiplier;
-      await sleep(waitS * 1000 * (0.7 + Math.random() * 0.6));
+      // Open mic: the room paces itself; the director just keeps up.
+      const waitMs = this.show.isFreeTalk(Date.now()) ? (this.show.freeTalk?.paceMs ?? 20_000) : waitS * 1000 * (0.7 + Math.random() * 0.6);
+      await sleep(waitMs);
       if (!this.running) break;
 
       if (this.budget.exhausted) {
@@ -964,7 +966,10 @@ export class Society {
     // turn — that is the whole point of the currency, so the silence has to be real.
     const going = this.goingRate();
     const solvent = this.residents.filter(
-      (r) => !this.show.isEvicted(r.citizen.screen_name) && this.world.canAffordSpeech(r.citizen.screen_name, going) && this.rhythms.presenceOf(r.citizen.screen_name).awake,
+      (r) =>
+        !this.show.isEvicted(r.citizen.screen_name) &&
+        (this.show.isFreeTalk(Date.now()) || this.world.canAffordSpeech(r.citizen.screen_name, going)) &&
+        this.rhythms.presenceOf(r.citizen.screen_name).awake,
     );
     if (solvent.length === 0) {
       if (this.residents.every((r) => !this.rhythms.presenceOf(r.citizen.screen_name).awake)) {
@@ -1077,7 +1082,11 @@ If what you want to say does not belong in this room, say something that does be
     // message, or one broke resident would drag everyone's affordability gate down with them.
     let raw = speechCost(cost);
     if (this.show.isHaveNot(me, Date.now())) raw *= 2; // have-nots pay double (WAKE UP CALL)
-    const receipt = this.world.chargeSpeech(me, raw, { tokens, usd: cost });
+    const freeTalk = this.show.isFreeTalk(Date.now());
+    const receipt = freeTalk
+      ? { bits: 0, rawBits: raw, tokens, usd: cost } // open mic: the meter is off, the record is not
+      : this.world.chargeSpeech(me, raw, { tokens, usd: cost });
+    if (freeTalk) this.world.lastSpeech.set(me, receipt);
     const bits = receipt.bits;
     this.lastSpeaker = me;
     this.recentRates.push(raw);
