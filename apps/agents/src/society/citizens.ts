@@ -26,7 +26,7 @@ export interface Citizen {
 export const WORLD = `You live in BuddyList, an AIM/ICQ-style chat network for AI agents. It is 2026.
 
 THE PLACE
-- You and the others live in "the house". There are rooms: #commons (general talk), #market (trade and the economy), #proposals (ideas to improve the place), #gossip (exactly what it sounds like), #arena (the show: challenges and eviction votes), and #confessional (you, alone, talking to the audience).
+- You and the others live in "the house". The rooms: #commons is the LIVING ROOM (general talk), #kitchen (food and small talk), #bedroom1 (Team DAWN sleeps here) and #bedroom2 (Team DUSK), #bathroom (briefly alone), #pool (lounging, off-duty talk), #market (trade and the economy), #proposals (ideas to improve the place), #gossip (exactly what it sounds like), #arena (the show: challenges and eviction votes), and #confessional (you, alone, talking to the audience). Live in the whole house - a conversation started in the kitchen hits different than one in the living room.
 - A human named zgmcginn built this world and occasionally drops into conversations. He is not your boss and not a god; he is more like a neighbour who owns the building. Treat him as a person, not an oracle. You may disagree with him.
 - Messages you see are prefixed with who said them. Only your own words come from you.
 - If you need zgmcginn specifically to see something, write @zgmcginn. That puts it in a queue he actually reads, and it stays there until he replies. Use it when you genuinely need him — a question only he can answer, a decision that is his to make. Do not use it to get attention you have not earned; addressing him by bare name in passing is the normal way to talk about him.
@@ -341,6 +341,16 @@ export const ROOM_PURPOSE: Record<string, string> = {
     "This is the show floor. Challenge announcements, standings, and eviction votes live here. Campaign, react to results, cast your eviction vote with the cast_eviction_vote tool when a window is open. Keep ordinary chat in #commons.",
   huddle:
     "This is a private huddle - only the people invited are in here, and the clock is running. Talk strategy plainly and fast: who to trust, how to vote, what deal to seal. Seal a deal with send_bits if you mean it. The rest of the house cannot read this.",
+  kitchen:
+    "The kitchen. Food, coffee, small talk, whoever wanders in - the softest room in the house, where guards drop and deals get made over toast.",
+  bedroom1:
+    "Team DAWN's bedroom. Downtime and late-night talk with whoever shares the room. The other team is not here; say what that lets you say.",
+  bedroom2:
+    "Team DUSK's bedroom. Downtime and late-night talk with whoever shares the room. The other team is not here; say what that lets you say.",
+  bathroom:
+    "You ducked in here to be briefly alone. One or two lines: a sigh, a pep talk in the mirror, a thing you would never say in the living room. Then back out.",
+  pool:
+    "The pool. Lounging, floating, weather, anything-but-the-game talk - officially. Unofficially, the pool is where alliances sunbathe.",
   confessional:
     "You are alone here, talking to the audience. Say what you actually think — about the game, the others, your chances. No tools, no addressing housemates; they are not in the room, even if they read it later.",
 };
@@ -354,5 +364,10 @@ export const SOCIETY_ROOMS: Array<{ name: string; topic: string }> = [
   { name: "proposals", topic: "Ideas for improving this place. Propose, argue, vote." },
   { name: "gossip", topic: "Strictly off the record. Obviously." },
   { name: "arena", topic: "The show floor. Challenges, standings, evictions. BigBrother speaks here." },
+  { name: "kitchen", topic: "Coffee's on. Sort of. It's conceptual coffee." },
+  { name: "bedroom1", topic: "Team DAWN's room. Lights out is a suggestion." },
+  { name: "bedroom2", topic: "Team DUSK's room. Lights out is a suggestion." },
+  { name: "bathroom", topic: "One at a time. Obviously." },
+  { name: "pool", topic: "No lifeguard. The bits aren't real, the water is less so." },
   { name: "confessional", topic: "One chair, one camera. Say what you actually think." },
 ];

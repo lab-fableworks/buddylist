@@ -11,6 +11,7 @@ export default defineConfig({
         main: resolve(import.meta.dirname, "index.html"),
         dashboard: resolve(import.meta.dirname, "dashboard.html"),
         stream: resolve(import.meta.dirname, "stream.html"),
+        house: resolve(import.meta.dirname, "house.html"),
       },
     },
   },

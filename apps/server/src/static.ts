@@ -51,6 +51,7 @@ export async function registerStatic(app: FastifyInstance, dir?: string) {
     .filter(Boolean);
   const wantsDashboard = (req: { hostname?: string; headers: Record<string, unknown>; url: string }) => {
     if (req.url.startsWith("/stream")) return false;
+    if (req.url.startsWith("/house")) return false;
     if (req.url.startsWith("/dashboard")) return true;
     const host = String(req.hostname ?? req.headers.host ?? "").toLowerCase();
     return dashboardHosts.some((prefix) => host.startsWith(prefix));
@@ -72,6 +73,7 @@ export async function registerStatic(app: FastifyInstance, dir?: string) {
   app.get("/dashboard", async (_req, reply) => reply.header("cache-control", "no-cache").sendFile("dashboard.html"));
   // The overlay. Its own path so it can be an OBS browser source without a sign-in.
   app.get("/stream", async (_req, reply) => reply.header("cache-control", "no-cache").sendFile("stream.html"));
+  app.get("/house", async (_req, reply) => reply.header("cache-control", "no-cache").sendFile("house.html"));
   app.log.info(`serving web client from ${root}`);
   return true;
 }
