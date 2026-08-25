@@ -77,6 +77,8 @@ export interface Presence {
 
 export class Rhythms {
   private state = new Map<string, State>();
+  /** name -> forced-awake-until. A wake-up call overrides the sleep schedule, not just breaks. */
+  private surged = new Map<string, number>();
   private enabled = process.env.SOCIETY_RHYTHMS !== "0";
   /** Minutes a break lasts. */
   private minBreak = Number(process.env.SOCIETY_BREAK_MIN ?? 20);
@@ -95,10 +97,19 @@ export class Rhythms {
 
   presenceOf(name: string): Presence {
     if (!this.enabled) return { awake: true };
+    if ((this.surged.get(name) ?? 0) > Date.now()) return { awake: true };
     const s = this.state.get(name);
     if (s && s.onBreakUntil > Date.now()) return { awake: false, reason: s.reason };
     if (!this.inWakingHours(name)) return { awake: false, reason: "asleep" };
     return { awake: true };
+  }
+
+  /** Drag everyone out of bed until the given time - sirens, lights, the whole production. */
+  surge(names: string[], until: number) {
+    for (const n of names) {
+      this.surged.set(n, until);
+      this.state.delete(n);
+    }
   }
 
   /** Roll for a break. Called after a resident speaks, so breaks start naturally mid-flow. */

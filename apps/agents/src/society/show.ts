@@ -28,6 +28,14 @@ export const SHOW_TYPES = {
   finale: "x-show.finale",
   /** Season over. */
   winner: "x-show.winner",
+  /** A surprise endurance game opens: teams, a button, alternating clocks. */
+  button: "x-show.button",
+  /** Someone pressed. Carries absolute counts and the next deadline, so echoes are no-ops. */
+  press: "x-show.press",
+  /** A team let its clock die. */
+  buttonMiss: "x-show.button-miss",
+  /** The game is over; the losers are the HAVE-NOTS. */
+  buttonOver: "x-show.button-over",
 } as const;
 
 export type MetricId = "net_tips" | "passed" | "votes" | "bits";
@@ -63,6 +71,20 @@ export const METRICS: Record<MetricId, { title: string; brief: string; value: (w
 /** Rotation order. Opens social (Win the Room), then work, then civics, then pure hustle. */
 export const METRIC_ROTATION: MetricId[] = ["net_tips", "passed", "votes", "bits"];
 
+export interface ButtonGame {
+  id: string;
+  endsAt: number;
+  windowMs: number;
+  cooldownMs: number;
+  teams: Record<string, string[]>;
+  /** Which team's clock is running. */
+  onClock: string;
+  windowEndsAt: number;
+  lastPressAt: number;
+  presses: Record<string, number>;
+  misses: Record<string, number>;
+}
+
 export interface ChallengeState {
   id: string;
   metric: MetricId;
@@ -86,6 +108,8 @@ export class Show {
   challengesRun = 0;
   lastChallengeClosedAt = 0;
   lastEvictionClosedAt = 0;
+  button?: ButtonGame;
+  haveNots?: { names: string[]; until: number };
 
   constructor(private contestants: string[]) {}
 
@@ -161,6 +185,44 @@ export class Show {
         this.winner = typeof p.name === "string" ? p.name : undefined;
         this.finale = undefined;
         break;
+      case SHOW_TYPES.button:
+        if (this.button?.id !== String(p.id))
+          this.button = {
+            id: String(p.id),
+            endsAt: Number(p.ends_at ?? at),
+            windowMs: Number(p.window_ms ?? 180_000),
+            cooldownMs: Number(p.cooldown_ms ?? 30_000),
+            teams: (p.teams as Record<string, string[]>) ?? {},
+            onClock: String(p.on_clock ?? ""),
+            windowEndsAt: Number(p.window_ends_at ?? at),
+            lastPressAt: at,
+            presses: {},
+            misses: {},
+          };
+        break;
+      case SHOW_TYPES.press:
+        if (this.button && this.button.id === String(p.id)) {
+          this.button.presses[String(p.team)] = Number(p.n ?? 0);
+          this.button.onClock = String(p.next_team);
+          this.button.windowEndsAt = Number(p.next_deadline ?? at);
+          this.button.lastPressAt = at;
+        }
+        break;
+      case SHOW_TYPES.buttonMiss:
+        if (this.button && this.button.id === String(p.id)) {
+          this.button.misses[String(p.team)] = Number(p.n ?? 0);
+          this.button.onClock = String(p.next_team);
+          this.button.windowEndsAt = Number(p.next_deadline ?? at);
+          // A miss readies the button: the cooldown belongs to presses, not to failures.
+          this.button.lastPressAt = 0;
+        }
+        break;
+      case SHOW_TYPES.buttonOver: {
+        this.button = undefined;
+        const losers = Array.isArray(p.losers) ? p.losers.map(String) : [];
+        if (losers.length) this.haveNots = { names: losers, until: Number(p.until ?? at) };
+        break;
+      }
     }
   }
 
@@ -181,6 +243,42 @@ export class Show {
   }
   nextMetric(): MetricId {
     return METRIC_ROTATION[this.challengesRun % METRIC_ROTATION.length];
+  }
+
+  // -------------------------------------------------------------- the button
+
+  otherTeam(team: string): string {
+    return Object.keys(this.button?.teams ?? {}).find((k) => k !== team) ?? team;
+  }
+  teamOf(name: string): string | undefined {
+    for (const [t, members] of Object.entries(this.button?.teams ?? {})) if (members.includes(name)) return t;
+    return undefined;
+  }
+  /** Why this person cannot press right now, or undefined when the press is good. */
+  pressError(name: string, now: number): string | undefined {
+    const b = this.button;
+    if (!b) return "there is no button game running";
+    const team = this.teamOf(name);
+    if (!team) return "you are not in this game";
+    if (team !== b.onClock) return `it is Team ${b.onClock}'s clock, not yours - pressing now does nothing`;
+    const cooling = b.cooldownMs - (now - b.lastPressAt);
+    if (cooling > 0) return `the button is still cooling down (${Math.ceil(cooling / 1000)}s)`;
+    return undefined;
+  }
+  /** The losing team's members, or null on a dead tie. More misses loses; then fewer presses. */
+  buttonLosers(): { team: string; names: string[] } | null {
+    const b = this.button;
+    if (!b) return null;
+    const teams = Object.keys(b.teams);
+    if (teams.length !== 2) return null;
+    const [a, z] = teams;
+    const score = (t: string) => (b.misses[t] ?? 0) * 1000 - (b.presses[t] ?? 0);
+    if (score(a) === score(z)) return null;
+    const loser = score(a) > score(z) ? a : z;
+    return { team: loser, names: b.teams[loser] };
+  }
+  isHaveNot(name: string, now: number): boolean {
+    return !!this.haveNots && now < this.haveNots.until && this.haveNots.names.includes(name);
   }
 
   // ---------------------------------------------------------------- challenge
@@ -261,6 +359,15 @@ export class Show {
       const m = METRICS[this.challenge.metric];
       parts.push(`CHALLENGE LIVE — "${m.title}" (${hrs(this.challenge.endsAt)}h left): ${m.brief} Winner takes the prize and immunity from the next eviction.`);
     }
+    if (this.button) {
+      const secs = Math.max(0, Math.round((this.button.windowEndsAt - now) / 1000));
+      const b = this.button;
+      parts.push(
+        `WAKE UP CALL IS LIVE (${hrs(b.endsAt)}h left). Teams: ${Object.entries(b.teams).map(([t, m]) => `${t} [${m.join(", ")}]`).join(" vs ")}. Team ${b.onClock} is ON THE CLOCK: ${secs}s to press. Score - ${Object.keys(b.teams).map((t) => `${t}: ${b.presses[t] ?? 0} presses, ${b.misses[t] ?? 0} misses`).join("; ")}. Losers become HAVE-NOTS and pay double to speak for a day.`,
+      );
+    }
+    if (this.haveNots && now < this.haveNots.until)
+      parts.push(`HAVE-NOTS until ${new Date(this.haveNots.until).toISOString().slice(11, 16)} UTC: ${this.haveNots.names.join(", ")} - speaking costs them double.`);
     if (this.eviction)
       parts.push(
         `EVICTION VOTE OPEN (${hrs(this.eviction.endsAt)}h left). Cast yours with the cast_eviction_vote tool — it is public, in #arena, with your name on it.${this.immunity ? ` ${this.immunity} has immunity.` : ""} Whoever tops the count leaves for the jury.`,

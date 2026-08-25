@@ -304,6 +304,13 @@ export class Society {
       // echo of the director's own post is harmless and an operator post steers the season.
       if (m.payload_type?.startsWith("x-show.") && m.sender === "BigBrother") {
         this.show.apply(m.payload_type, (m.payload ?? {}) as Record<string, unknown>, m.sender, Date.parse(m.ts));
+        if (m.payload_type === SHOW_TYPES.button && this.show.button) {
+          this.rhythms.surge(this.residents.map((r) => r.citizen.screen_name), this.show.button.endsAt);
+          for (const r of this.residents) {
+            void r.bot.setPresence("online", "WAKE UP CALL").catch(() => {});
+          }
+          log("show: WAKE UP CALL - the whole house is up");
+        }
       }
       // Grants are minted from outside and must land in the live world, not just on replay.
       if (m.payload_type === LEDGER_TYPES.grant) {
@@ -443,6 +450,71 @@ export class Society {
       if (sent) this.show.apply(type, payload, "BigBrother", now);
       return !!sent;
     };
+
+    // ---- the button game owns the tick while it runs ----
+    const bg = this.show.button;
+    if (bg) {
+      if (now >= bg.endsAt) {
+        const lose = this.show.buttonLosers();
+        const tally = Object.keys(bg.teams).map((t) => `${t}: ${bg.presses[t] ?? 0} presses, ${bg.misses[t] ?? 0} misses`).join(" | ");
+        const winTeam = lose ? this.show.otherTeam(lose.team) : "";
+        const winners = lose ? bg.teams[winTeam] ?? [] : [];
+        for (const w of winners) this.world.credit(w, 25);
+        await post(
+          lose
+            ? `THE BUTTON IS DEAD. Final: ${tally}.\nTeam ${winTeam} - ${winners.join(", ")} - you WIN: 25 bits each, and a hot breakfast is being laid out in #commons as I speak. Pancakes. Real syrup. You earned it.\nTeam ${lose.team} - ${lose.names.join(", ")} - you get nothing, and you are the HAVE-NOTS for the next 24 hours: everything you say costs you double. You may watch the pancakes.`
+            : `THE BUTTON IS DEAD. Final: ${tally}. A dead tie - no bits, no breakfast, no have-nots. Nobody gets pancakes and nobody gets to feel superior. The worst of both worlds.`,
+          SHOW_TYPES.buttonOver,
+          { id: bg.id, losers: lose?.names ?? [], team: lose?.team ?? "", winners, prize: winners.length ? 25 : 0, until: now + 24 * 3600_000, tally: { presses: bg.presses, misses: bg.misses } },
+        );
+        log(`show: button over - ${lose ? `Team ${winTeam} wins breakfast; ${lose.team} are have-nots` : "tie"}`);
+        return false;
+      }
+      if (now >= bg.windowEndsAt) {
+        const t = bg.onClock;
+        const n = (bg.misses[t] ?? 0) + 1;
+        const nxt = this.show.otherTeam(t);
+        await post(
+          `*** MISS. Team ${t} let the clock die (miss #${n}). Team ${nxt}, the button is READY and your clock starts NOW. ***`,
+          SHOW_TYPES.buttonMiss,
+          { id: bg.id, team: t, n, next_team: nxt, next_deadline: now + bg.windowMs },
+        );
+        log(`show: button miss by ${t} (#${n})`);
+        return false;
+      }
+      const clockNames = bg.teams[bg.onClock] ?? [];
+      const pool = this.residents.filter(
+        (r) => clockNames.includes(r.citizen.screen_name) && !this.show.isEvicted(r.citizen.screen_name) && this.world.canAffordSpeech(r.citizen.screen_name, this.goingRate()),
+      );
+      if (pool.length === 0) return false; // the window lapses on its own; the miss handler collects
+      const res = pool[((bg.presses[bg.onClock] ?? 0) + (bg.misses[bg.onClock] ?? 0)) % pool.length];
+      const secsLeft = Math.max(1, Math.round((bg.windowEndsAt - now) / 1000));
+      const cooling = Math.max(0, bg.cooldownMs - (now - bg.lastPressAt));
+      const turn = await this.takeTurn(
+        res,
+        arena,
+        `WAKE UP CALL. Your team (${bg.onClock}) is ON THE CLOCK: ${secsLeft} seconds before a MISS. ${cooling > 0 ? `The button is cooling down (${Math.ceil(cooling / 1000)}s) - stall, taunt, breathe, then press.` : "The button is READY."} To press it, include the word PRESS in your message. One line is enough; you can also talk - your team, the other team, the unfairness of it all - but the PRESS is the job.`,
+        "arena",
+      );
+      const said = turn.said ? this.transcripts.get(arena)?.slice(-1)[0] ?? "" : "";
+      if (turn.said && /press/i.test(said)) {
+        const err = this.show.pressError(res.citizen.screen_name, Date.now());
+        if (!err) {
+          const t = bg.onClock;
+          const n = (bg.presses[t] ?? 0) + 1;
+          const nxt = this.show.otherTeam(t);
+          const payload = { id: bg.id, team: t, n, next_team: nxt, next_deadline: Date.now() + bg.windowMs };
+          const sent = await res.bot
+            .send(arena, { body: `*** ${res.citizen.screen_name} PRESSES THE BUTTON for Team ${t} (press #${n}). Team ${nxt}: your clock starts NOW. ***`, payload_type: SHOW_TYPES.press, payload })
+            .catch(() => null);
+          if (sent) this.show.apply(SHOW_TYPES.press, payload, res.citizen.screen_name, Date.now());
+          log(`show: ${res.citizen.screen_name} pressed for ${t} (#${n})`);
+        } else {
+          await res.bot.send(arena, `(${res.citizen.screen_name} slapped the button - ${err})`).catch(() => {});
+        }
+      }
+      return true;
+    }
 
     // Close a challenge whose deadline has passed.
     if (this.show.challenge && now >= this.show.challenge.endsAt) {
@@ -968,7 +1040,8 @@ If what you want to say does not belong in this room, say something that does be
 
     // Relief is applied here, not in speechCost: the going rate must stay the true price of a
     // message, or one broke resident would drag everyone's affordability gate down with them.
-    const raw = speechCost(cost);
+    let raw = speechCost(cost);
+    if (this.show.isHaveNot(me, Date.now())) raw *= 2; // have-nots pay double (WAKE UP CALL)
     const receipt = this.world.chargeSpeech(me, raw, { tokens, usd: cost });
     const bits = receipt.bits;
     this.lastSpeaker = me;

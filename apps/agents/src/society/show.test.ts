@@ -146,6 +146,69 @@ describe("cadence", () => {
   });
 });
 
+describe("the button (WAKE UP CALL)", () => {
+  const openGame = (show: Show, at = 0) =>
+    show.apply(
+      SHOW_TYPES.button,
+      { id: "b1", ends_at: 2 * H, window_ms: 180_000, cooldown_ms: 30_000, teams: { DAWN: ["Ace", "Byte"], DUSK: ["Halo", "Vesper"] }, on_clock: "DAWN", window_ends_at: at + 180_000 },
+      "BigBrother",
+      at,
+    );
+
+  it("validates presses: right team, live game, cooled-down button", () => {
+    const { show } = fresh();
+    expect(show.pressError("Ace", 0)).toContain("no button game");
+    openGame(show);
+    expect(show.pressError("Halo", 60_000)).toContain("Team DAWN's clock");
+    expect(show.pressError("BigBrother", 60_000)).toContain("not in this game");
+    expect(show.pressError("Ace", 10_000)).toContain("cooling down");
+    expect(show.pressError("Ace", 60_000)).toBeUndefined();
+  });
+
+  it("a press flips the clock; echoes of the same press change nothing", () => {
+    const { show } = fresh();
+    openGame(show);
+    const press = { id: "b1", team: "DAWN", n: 1, next_team: "DUSK", next_deadline: 240_000 };
+    show.apply(SHOW_TYPES.press, press, "Ace", 60_000);
+    expect(show.button!.onClock).toBe("DUSK");
+    expect(show.button!.presses).toEqual({ DAWN: 1 });
+    show.apply(SHOW_TYPES.press, press, "Ace", 60_000); // socket echo: absolute state, same result
+    expect(show.button!.presses).toEqual({ DAWN: 1 });
+    expect(show.button!.windowEndsAt).toBe(240_000);
+  });
+
+  it("a miss counts against the sleeping team and readies the button for the other", () => {
+    const { show } = fresh();
+    openGame(show);
+    show.apply(SHOW_TYPES.buttonMiss, { id: "b1", team: "DAWN", n: 1, next_team: "DUSK", next_deadline: 400_000 }, "BigBrother", 200_000);
+    expect(show.button!.misses).toEqual({ DAWN: 1 });
+    expect(show.button!.onClock).toBe("DUSK");
+    expect(show.pressError("Halo", 200_001)).toBeUndefined(); // no cooldown after a miss
+  });
+
+  it("more misses loses; fewer presses breaks a miss tie; a dead tie spares everyone", () => {
+    const { show } = fresh();
+    openGame(show);
+    show.button!.misses = { DAWN: 2, DUSK: 1 };
+    expect(show.buttonLosers()).toEqual({ team: "DAWN", names: ["Ace", "Byte"] });
+    show.button!.misses = { DAWN: 1, DUSK: 1 };
+    show.button!.presses = { DAWN: 5, DUSK: 3 };
+    expect(show.buttonLosers()).toEqual({ team: "DUSK", names: ["Halo", "Vesper"] });
+    show.button!.presses = { DAWN: 5, DUSK: 5 };
+    expect(show.buttonLosers()).toBeNull();
+  });
+
+  it("the losers are have-nots until the clock says otherwise", () => {
+    const { show } = fresh();
+    openGame(show);
+    show.apply(SHOW_TYPES.buttonOver, { id: "b1", losers: ["Ace", "Byte"], team: "DAWN", until: 26 * H }, "BigBrother", 2 * H);
+    expect(show.button).toBeUndefined();
+    expect(show.isHaveNot("Ace", 3 * H)).toBe(true);
+    expect(show.isHaveNot("Halo", 3 * H)).toBe(false);
+    expect(show.isHaveNot("Ace", 27 * H)).toBe(false);
+  });
+});
+
 describe("metric sanity", () => {
   it("every metric is a pure function of world state", () => {
     const { world } = fresh();
