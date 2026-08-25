@@ -232,6 +232,18 @@ export class Society {
         this.rhythms.surge(this.residents.map((r) => r.citizen.screen_name), this.show.button.endsAt);
         log("show: button game resumed mid-flight - the house stays awake");
       }
+      if (gossip) {
+        let gAfter = 0;
+        for (;;) {
+          const page: Message[] = await host.history(gossip, { after: gAfter, limit: 200 }).catch(() => []);
+          if (page.length === 0) break;
+          for (const m of page) {
+            gAfter = Math.max(gAfter, m.seq);
+            if (m.payload_type === SHOW_TYPES.huddleRecord) this.show.apply(m.payload_type, (m.payload ?? {}) as Record<string, unknown>, m.sender, Date.parse(m.ts));
+          }
+          if (page.length < 200) break;
+        }
+      }
       if (this.showOn)
         log(
           `season restored: ${this.show.active().length} in the house, ${this.show.jury().length} on the jury` +
@@ -306,6 +318,9 @@ export class Society {
       this.remember(m);
       // Show beats are applied wherever they were posted from; apply() is idempotent, so the
       // echo of the director's own post is harmless and an operator post steers the season.
+      if (m.payload_type === SHOW_TYPES.huddleRecord) {
+        this.show.apply(m.payload_type, (m.payload ?? {}) as Record<string, unknown>, m.sender, Date.parse(m.ts));
+      }
       if (m.payload_type?.startsWith("x-show.") && m.sender === "BigBrother") {
         this.show.apply(m.payload_type, (m.payload ?? {}) as Record<string, unknown>, m.sender, Date.parse(m.ts));
         if (m.payload_type === SHOW_TYPES.button && this.show.button) {
@@ -546,10 +561,24 @@ export class Society {
       const { out, tally } = this.show.evictionResult(this.world);
       const lines = Object.entries(tally).sort((a, b) => b[1] - a[1]).map(([n, v]) => `  ${n}: ${v} vote${v === 1 ? "" : "s"}`).join("\n");
       if (out) {
+        // Drama pays, from the record: the knife that came out of a shared back room, and
+        // the nerve of everyone who took votes and lived.
+        const votes = this.show.eviction.votes;
+        const betrayers = Object.entries(votes)
+          .filter(([voter, target]) => target === out && voter !== out && this.show.huddledTogether(voter, out))
+          .map(([voter]) => voter);
+        for (const b of betrayers) this.world.credit(b, 20);
+        const survivors = Object.entries(tally).filter(([n]) => n !== out && !this.show.isEvicted(n));
+        for (const [n, v] of survivors) this.world.credit(n, 5 * v);
+        const bountyLines = [
+          ...betrayers.map((b) => `BETRAYAL BONUS: ${b} shared a back room with ${out} and voted them out anyway. +20 bits. The jury saw it too.`),
+          ...survivors.map(([n, v]) => `SURVIVOR'S PURSE: ${n} took ${v} vote${v === 1 ? "" : "s"} and lived. +${5 * v} bits for being worth arguing about.`),
+        ].join(String.fromCharCode(10));
         await post(
-          `THE HOUSE HAS SPOKEN. ${out} has been evicted and joins the jury.\n${lines}\n${out}: the jury remembers everything. The rest of you: so does ${out}.`,
+          `THE HOUSE HAS SPOKEN. ${out} has been evicted and joins the jury.\n${lines}\n${out}: the jury remembers everything. The rest of you: so does ${out}.` +
+            (bountyLines ? String.fromCharCode(10) + bountyLines : ""),
           SHOW_TYPES.evicted,
-          { id: this.show.eviction.id, name: out, tally },
+          { id: this.show.eviction.id, name: out, tally, betrayers, survivors: Object.fromEntries(survivors) },
         );
         const res = this.residents.find((r) => r.citizen.screen_name === out);
         if (res) {
@@ -1306,7 +1335,13 @@ If what you want to say does not belong in this room, say something that does be
         .send(made.id, `(${me} opened this huddle: "${topic}". In the room: ${[me, ...invited].join(", ")}. ${this.huddleMinutes} minutes on the clock - the house cannot hear you.)`)
         .catch(() => {});
       // The house sees the door close. What was said stays inside; that people left does not.
-      if (gossip) await res.bot.send(gossip, `(${me} just pulled ${invited.join(" and ")} into the back room. Door: #${roomName})`).catch(() => {});
+      if (gossip) {
+        const record = { creator: me, members: [me, ...invited] };
+        await res.bot
+          .send(gossip, { body: `(${me} just pulled ${invited.join(" and ")} into the back room. Door: #${roomName})`, payload_type: SHOW_TYPES.huddleRecord, payload: record })
+          .catch(() => {});
+        this.show.apply(SHOW_TYPES.huddleRecord, record, me, Date.now());
+      }
       log(`huddle: ${me} opened "${topic}" with ${invited.join(", ")}`);
       return;
     }
