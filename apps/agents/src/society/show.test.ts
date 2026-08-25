@@ -209,6 +209,19 @@ describe("the button (WAKE UP CALL)", () => {
   });
 });
 
+describe("the betrayal ledger", () => {
+  it("remembers every pair that shared a back room, across any number of huddles", () => {
+    const { show } = fresh();
+    expect(show.huddledTogether("Ace", "Byte")).toBe(false);
+    show.apply(SHOW_TYPES.huddleRecord, { creator: "Ace", members: ["Ace", "Byte", "Halo"] }, "Ace", 0);
+    expect(show.huddledTogether("Byte", "Ace")).toBe(true); // order-free
+    expect(show.huddledTogether("Byte", "Halo")).toBe(true); // co-invitees count too
+    expect(show.huddledTogether("Ace", "Vesper")).toBe(false);
+    show.apply(SHOW_TYPES.huddleRecord, { creator: "Vesper", members: ["Vesper", "Ace"] }, "Vesper", 1);
+    expect(show.huddledTogether("Ace", "Vesper")).toBe(true);
+  });
+});
+
 describe("metric sanity", () => {
   it("every metric is a pure function of world state", () => {
     const { world } = fresh();
