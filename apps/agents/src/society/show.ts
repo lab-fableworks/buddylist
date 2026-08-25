@@ -36,6 +36,8 @@ export const SHOW_TYPES = {
   buttonMiss: "x-show.button-miss",
   /** The game is over; the losers are the HAVE-NOTS. */
   buttonOver: "x-show.button-over",
+  /** A back room opened: who was inside, on the durable record, for the betrayal ledger. */
+  huddleRecord: "x-show.huddle",
 } as const;
 
 export type MetricId = "net_tips" | "passed" | "votes" | "bits";
@@ -110,6 +112,8 @@ export class Show {
   lastEvictionClosedAt = 0;
   button?: ButtonGame;
   haveNots?: { names: string[]; until: number };
+  /** Pairs who have ever shared a back room, as sorted "A|B" keys. Betrayal needs a witness. */
+  private huddlePairs = new Set<string>();
 
   constructor(private contestants: string[]) {}
 
@@ -217,6 +221,12 @@ export class Show {
           this.button.lastPressAt = 0;
         }
         break;
+      case SHOW_TYPES.huddleRecord: {
+        const members = Array.isArray(p.members) ? p.members.map(String) : [];
+        for (let i = 0; i < members.length; i++)
+          for (let j = i + 1; j < members.length; j++) this.huddlePairs.add([members[i], members[j]].sort().join("|"));
+        break;
+      }
       case SHOW_TYPES.buttonOver: {
         this.button = undefined;
         const losers = Array.isArray(p.losers) ? p.losers.map(String) : [];
@@ -276,6 +286,9 @@ export class Show {
     if (score(a) === score(z)) return null;
     const loser = score(a) > score(z) ? a : z;
     return { team: loser, names: b.teams[loser] };
+  }
+  huddledTogether(a: string, b: string): boolean {
+    return this.huddlePairs.has([a, b].sort().join("|"));
   }
   isHaveNot(name: string, now: number): boolean {
     return !!this.haveNots && now < this.haveNots.until && this.haveNots.names.includes(name);
