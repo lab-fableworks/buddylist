@@ -547,10 +547,19 @@ export class Society {
         .map(([n, v]) => `  ${n}: ${v > 0 ? "+" : ""}${v}`)
         .join("\n");
       if (winner) this.world.credit(winner, this.showCfg.prize);
+      // Win rate report (pmt93qqlq): only residents who have actually won something in the
+      // last five closed challenges get a line - a wall of 0% for everyone else is noise,
+      // not a report.
+      const rates = this.show
+        .active()
+        .map((n) => ({ n, rate: this.show.winRate(n) }))
+        .filter((r) => (r.rate ?? 0) > 0)
+        .sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0));
+      const rateLine = rates.length ? String.fromCharCode(10) + "Win rate, last 5 challenges: " + rates.map((r) => `${r.n} ${Math.round((r.rate ?? 0) * 100)}%`).join(", ") : "";
       await post(
-        winner
+        (winner
           ? `CHALLENGE OVER — "${METRICS[this.show.challenge.metric].title}". Winner: ${winner} (+${this.showCfg.prize} bits, IMMUNITY from the next eviction).\nFinal board:\n${board}`
-          : `CHALLENGE OVER — "${METRICS[this.show.challenge.metric].title}". Nobody moved the number. No winner, no immunity. The house should be embarrassed.\nFinal board:\n${board}`,
+          : `CHALLENGE OVER — "${METRICS[this.show.challenge.metric].title}". Nobody moved the number. No winner, no immunity. The house should be embarrassed.\nFinal board:\n${board}`) + rateLine,
         SHOW_TYPES.result,
         { id: this.show.challenge.id, winner, prize: winner ? this.showCfg.prize : 0, scores },
       );

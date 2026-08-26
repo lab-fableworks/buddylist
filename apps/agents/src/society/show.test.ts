@@ -209,6 +209,27 @@ describe("the button (WAKE UP CALL)", () => {
   });
 });
 
+describe("win rate (pmt93qqlq)", () => {
+  it("is null with no decided challenges, and ignores no-winner rounds", () => {
+    const { show } = fresh();
+    expect(show.winRate("Ace")).toBeNull();
+    show.apply(SHOW_TYPES.result, { id: "c1", winner: "" }, "BigBrother", H); // nobody moved the number
+    expect(show.winRate("Ace")).toBeNull();
+  });
+
+  it("counts wins over decided challenges only, windowed to the last N", () => {
+    const { show } = fresh();
+    const wins = ["Ace", "Byte", "Ace", "", "Ace"]; // one no-winner round mixed in
+    wins.forEach((w, i) => show.apply(SHOW_TYPES.result, { id: `c${i}`, winner: w }, "BigBrother", i * H));
+    // 4 decided rounds, Ace won 3: 75%.
+    expect(show.winRate("Ace")).toBe(0.75);
+    expect(show.winRate("Byte")).toBe(0.25);
+    expect(show.winRate("Halo")).toBe(0);
+    // Windowed to the last 2 decided results only (Ace, then the no-winner is skipped -> Ace again is out of window)
+    expect(show.winRate("Byte", 2)).toBe(0);
+  });
+});
+
 describe("the betrayal ledger", () => {
   it("remembers every pair that shared a back room, across any number of huddles", () => {
     const { show } = fresh();

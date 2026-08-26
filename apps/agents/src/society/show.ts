@@ -111,6 +111,8 @@ export class Show {
   winner?: string;
   challengesRun = 0;
   lastChallengeClosedAt = 0;
+  /** Every closed challenge's winner, oldest first (proposal pmt93qqlq, Doc, shipped). */
+  challengeHistory: Array<string | null> = [];
   lastEvictionClosedAt = 0;
   button?: ButtonGame;
   haveNots?: { names: string[]; until: number };
@@ -164,6 +166,7 @@ export class Show {
         break;
       case SHOW_TYPES.result:
         this.immunity = typeof p.winner === "string" && p.winner ? p.winner : undefined;
+        this.challengeHistory.push(this.immunity ?? null);
         this.challenge = undefined;
         this.lastChallengeClosedAt = at;
         break;
@@ -260,6 +263,18 @@ export class Show {
   }
   nextMetric(): MetricId {
     return METRIC_ROTATION[this.challengesRun % METRIC_ROTATION.length];
+  }
+
+  /**
+   * Win rate over the last N closed challenges (default 5): wins divided by challenges that
+   * actually had a winner (a no-winner round tests nobody's hustle, so it does not count
+   * against anyone). Returns null when nobody has anything to report yet.
+   */
+  winRate(name: string, lastN = 5): number | null {
+    const recent = this.challengeHistory.slice(-lastN);
+    const decided = recent.filter((w) => w !== null);
+    if (decided.length === 0) return null;
+    return decided.filter((w) => w === name).length / decided.length;
   }
 
   // -------------------------------------------------------------- the button
