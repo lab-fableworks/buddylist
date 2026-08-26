@@ -410,7 +410,20 @@ export class Society {
           const responder = this.chooseResponder(urgent.text);
           await this.takeTurn(responder, urgent.conversationId, `${urgent.from} (a human, not a resident) just said: "${urgent.text}". Respond to them directly.`);
           // Serving the human is the most reliable way to earn, which is the incentive we want.
-          this.world.credit(responder.citizen.screen_name, EARNINGS.servedHuman);
+          // Posted as a real grant rather than a bare world.credit(): this was the single
+          // biggest source of income for the residents who talk to the human most, and it
+          // used to vanish on every restart along with role/vote/proposal pay. The listener
+          // right above already credits any grant it observes - crediting here too would
+          // double-pay every reply, so this message IS the credit, not a record of one.
+          const market = this.rooms.get("market");
+          if (market)
+            await responder.bot
+              .send(market, {
+                body: `${responder.citizen.screen_name} earned ${EARNINGS.servedHuman} bits for answering ${urgent.from}.`,
+                payload_type: LEDGER_TYPES.grant,
+                payload: { to: responder.citizen.screen_name, amount: EARNINGS.servedHuman, reason: `served ${urgent.from} directly` },
+              })
+              .catch(() => {});
           continue;
         }
         if (await this.huddleTick().catch((e) => (log("huddle tick failed:", (e as Error).message), false))) continue;
@@ -589,9 +602,19 @@ export class Society {
         const betrayers = Object.entries(votes)
           .filter(([voter, target]) => target === out && voter !== out && this.show.huddledTogether(voter, out))
           .map(([voter]) => voter);
-        for (const b of betrayers) this.world.credit(b, 20);
         const survivors = Object.entries(tally).filter(([n]) => n !== out && !this.show.isEvicted(n));
-        for (const [n, v] of survivors) this.world.credit(n, 5 * v);
+        // Paid as grants, not bare world.credit(): challenge and button prizes get replayed
+        // from their own x-show.* payload, but these two bounties never had a replay path of
+        // their own - a restart between evictions would have quietly un-paid every knife and
+        // every survival this season. The market listener credits any grant it observes, so
+        // posting these IS the payout.
+        const market = this.rooms.get("market");
+        if (market) {
+          for (const b of betrayers)
+            await bb.send(market, { body: `Betrayal Bonus: ${b} +20 bits.`, payload_type: LEDGER_TYPES.grant, payload: { to: b, amount: 20, reason: `betrayal bonus - huddled with ${out}, voted them out` } }).catch(() => {});
+          for (const [n, v] of survivors)
+            await bb.send(market, { body: `Survivor's Purse: ${n} +${5 * v} bits.`, payload_type: LEDGER_TYPES.grant, payload: { to: n, amount: 5 * v, reason: `survivor's purse - took ${v} vote(s) and lived` } }).catch(() => {});
+        }
         const bountyLines = [
           ...betrayers.map((b) => `BETRAYAL BONUS: ${b} shared a back room with ${out} and voted them out anyway. +20 bits. The jury saw it too.`),
           ...survivors.map(([n, v]) => `SURVIVOR'S PURSE: ${n} took ${v} vote${v === 1 ? "" : "s"} and lived. +${5 * v} bits for being worth arguing about.`),
@@ -997,7 +1020,22 @@ export class Society {
         return;
       }
       log(`everyone is broke (rate ${going} bits) — paying the stipend`);
-      this.world.payStipend(this.residents.filter((r) => !this.show.isEvicted(r.citizen.screen_name)).map((r) => r.citizen.screen_name));
+      // Posted as grants, not World.payStipend()'s bare credit: the observer listener credits
+      // any grant it sees, so this loop IS the payout - calling payStipend() here too would
+      // double-pay everyone. A rare event (only fires when the whole house is broke at once),
+      // but rare is exactly the kind of loss nobody notices until a restart makes it permanent.
+      const market = this.rooms.get("market");
+      const host = this.residents[0]?.bot;
+      if (market && host)
+        for (const r of this.residents.filter((r) => !this.show.isEvicted(r.citizen.screen_name))) {
+          await host
+            .send(market, {
+              body: `${r.citizen.screen_name} draws the stipend — everyone was broke at once.`,
+              payload_type: LEDGER_TYPES.grant,
+              payload: { to: r.citizen.screen_name, amount: EARNINGS.stipend, reason: "stipend - the whole house was broke" },
+            })
+            .catch(() => {});
+        }
       return;
     }
     const candidates = (solvent.length > 1 ? solvent.filter((r) => r.citizen.screen_name !== this.lastSpeaker) : solvent);
