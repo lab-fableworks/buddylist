@@ -223,6 +223,17 @@ export class Society {
           if (m.payload_type?.startsWith("x-show.")) {
             sawShow = true;
             this.show.apply(m.payload_type, (m.payload ?? {}) as Record<string, unknown>, m.sender, Date.parse(m.ts));
+            // Prize money that only ever lived in a live world.credit() call, replayed from
+            // the same numbers the room was already told. Every other economic act here goes
+            // through World.replay(); these two are the one place prize money is minted
+            // outside it, so they need their own line to survive a restart.
+            const pp = (m.payload ?? {}) as Record<string, unknown>;
+            if (m.payload_type === SHOW_TYPES.result && typeof pp.winner === "string" && pp.winner && Number(pp.prize) > 0) {
+              this.world.credit(pp.winner, Number(pp.prize));
+            }
+            if (m.payload_type === SHOW_TYPES.buttonOver && Array.isArray(pp.winners) && Number(pp.prize) > 0) {
+              for (const w of pp.winners) this.world.credit(String(w), Number(pp.prize));
+            }
           }
         }
         if (page.length < 200) break;

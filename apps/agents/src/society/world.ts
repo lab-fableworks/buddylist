@@ -292,14 +292,19 @@ export class World {
     }
     return { ok: true, paid, late, lateHours };
   }
-  /** Replay-side twin of fileReport: the timestamp and count, no payout. */
-  recordReport(name: string, who: string, at: number, countIt = true) {
+  /**
+   * Replay-side twin of fileReport: the timestamp, the count, and now the payout too. The
+   * live path already logged what it paid on the x-role.report message; a boot that ignored
+   * it was treating real, earned bits as if they only existed in the crashed process's RAM.
+   */
+  recordReport(name: string, who: string, at: number, countIt = true, paid = 0) {
     const held = this.roles.get(name);
     if (!held || held.holder !== who) return;
     held.lastReportAt = at;
     held.lastPaidAt = at;
     if (countIt) held.reports += 1;
     held.delinquencies = 0;
+    if (paid > 0) this.credit(who, paid);
   }
   /** Replay-side twin of a sweep strike, so a deploy neither re-announces nor forgets one. */
   recordDelinquency(name: string, who: string, count: number, at: number) {
@@ -600,16 +605,25 @@ export async function replay(bot: BuddyList, conversationId: string, world: Worl
           world.resignRole(String(p.role), m.sender);
           break;
         case LEDGER_TYPES.roleReport:
-          // Replay must not pay again: the balance is rebuilt from grants and transfers only,
-          // and role pay, like vote pay, is minted state that lives in the running process.
-          world.recordReport(String(p.role), m.sender, Date.parse(m.ts));
+          // The x-role.report message already carries what was paid; a restart that ignored
+          // it wiped every duty payout the process had ever made. Replay it, once, from the
+          // number already on the record - the same number the room was already told.
+          world.recordReport(String(p.role), m.sender, Date.parse(m.ts), true, Number(p.paid ?? 0));
           break;
         case LEDGER_TYPES.delinquent:
           world.recordDelinquency(String(p.role), m.sender, Number(p.count ?? 1), Date.parse(m.ts));
           break;
-        case LEDGER_TYPES.vote:
-          world.vote(String(p.id), m.sender, p.choice === "against" ? "against" : "for", electorate);
+        case LEDGER_TYPES.vote: {
+          // Mirrors the live vote handler exactly: votedq when the payload says this vote was
+          // paid, proposalPassed to the author the instant a vote resolves it. world.vote()
+          // itself already applies the status transition here, before any x-civic.resolution
+          // line for the same proposal - crediting there instead would find the proposal
+          // already marked passed and silently pay nobody.
+          const resolved = world.vote(String(p.id), m.sender, p.choice === "against" ? "against" : "for", electorate);
+          if (p.paid === true) world.credit(m.sender, EARNINGS.votedq);
+          if (resolved?.status === "passed") world.credit(resolved.author, EARNINGS.proposalPassed);
           break;
+        }
         case LEDGER_TYPES.opinion:
           world.setOpinion(m.sender, String(p.about), { score: Number(p.score), note: String(p.note ?? "") });
           break;

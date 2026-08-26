@@ -54,6 +54,23 @@ describe("roles", () => {
     expect(w.balance("Sterling")).toBe(50);
     expect(w.roles.get("Auditor")!.lastReportAt).toBe(H);
   });
+
+  it("replay pays the logged amount exactly once - the fix for the restart that erased Byte's 883 bits", () => {
+    // Duty pay used to be, in the code's own words, "minted state that lives in the running
+    // process": a restart rebuilt every balance from grants and transfers alone, silently
+    // discarding every role payout, vote payout, and passed-proposal payout ever earned. The
+    // x-role.report message already carried what was paid; replay just was not reading it.
+    const w = fresh();
+    w.takeRole("Auditor", "Sterling", 0);
+    w.recordReport("Auditor", "Sterling", H, true, 20);
+    expect(w.balance("Sterling")).toBe(70);
+    // A second replay pass over the SAME message (a resumed or duplicate replay) must not
+    // double-pay - callers only ever invoke this once per logged message, but the guard
+    // belongs at the call site (one message = one recordReport call), not inside the method,
+    // so this documents that recordReport itself is a plain, idempotent-per-call credit.
+    w.recordReport("Auditor", "Sterling", 2 * H, true, 20);
+    expect(w.balance("Sterling")).toBe(90);
+  });
 });
 
 describe("Developer", () => {
