@@ -70,8 +70,16 @@ export const speechCost = (usd: number) => Math.max(1, Math.round(usd * BITS_PER
  * back in. The floor is what stops it becoming free speech for the permanently bankrupt: at
  * zero you still cannot afford the floor, and the stipend is what gets you off the mat.
  */
-/** How many lines a resident's notebook holds. It is in every prompt; keep it small. */
-export const NOTEBOOK_MAX = Number(process.env.SOCIETY_NOTEBOOK_MAX ?? 6);
+/** What a notebook line must clear to earn its bit. Deliberately dull, checkable rules. */
+export const NOTEBOOK_MIN_CHARS = Number(process.env.SOCIETY_NOTEBOOK_MIN_CHARS ?? 25);
+export const NOTEBOOK_MIN_WORDS = Number(process.env.SOCIETY_NOTEBOOK_MIN_WORDS ?? 5);
+export const NOTEBOOK_PAY_GAP_MS = Number(process.env.SOCIETY_NOTEBOOK_PAY_GAP_MIN ?? 20) * 60_000;
+/**
+ * How many lines a resident's notebook holds. This rides in every prompt they take, so it is
+ * the one number here with a running cost attached: thirty lines is roughly 700 tokens on
+ * every turn, every resident. Worth it while the notebook is the sharpest thing in the game.
+ */
+export const NOTEBOOK_MAX = Number(process.env.SOCIETY_NOTEBOOK_MAX ?? 30);
 export const RELIEF_THRESHOLD = Number(process.env.SOCIETY_RELIEF_THRESHOLD ?? 50);
 export const SPEECH_FLOOR = Number(process.env.SOCIETY_SPEECH_FLOOR ?? 1);
 
@@ -99,6 +107,8 @@ export const EARNINGS = {
   votedq: Number(process.env.SOCIETY_PAY_VOTE ?? 3),
   /** Trickle so a bankrupt society can climb out rather than deadlock in silence. */
   stipend: Number(process.env.SOCIETY_STIPEND ?? 4),
+  /** A new, substantive line in your own notebook. Small on purpose: it is a nudge, not a job. */
+  notebookLine: Number(process.env.SOCIETY_PAY_NOTEBOOK ?? 1),
 };
 
 /** Lowercased, punctuation stripped, whitespace collapsed - the identity a title is judged by. */
@@ -127,6 +137,10 @@ export class World {
    * take. The oldest note falls off when a new one arrives.
    */
   notebooks = new Map<string, string[]>();
+  /** Normalised lines already paid for, per resident. Outlives the notebook's own window. */
+  notebookPaid = new Map<string, string[]>();
+  /** When each resident was last paid for a line, so nobody dumps six in one turn. */
+  notebookPaidAt = new Map<string, number>();
   private roleDefs: RoleDef[];
 
   constructor(starting: Array<{ screen_name: string; wealth: number }>, roleDefs: RoleDef[] = []) {
@@ -360,6 +374,32 @@ export class World {
       out.push({ role: name, holder: s.holder, count: s.delinquencies, vacated });
     }
     return out;
+  }
+
+  /**
+   * Whether a notebook line earns its bit, and why not when it does not. Deterministic by
+   * design: a model deciding what counts as "constructive" would be unpredictable, would
+   * cost a call on every write, and could be talked into anything.
+   */
+  notebookPayable(who: string, note: string, now = Date.now()): { ok: boolean; why?: string } {
+    const line = note.trim().slice(0, 160);
+    if (line.length < NOTEBOOK_MIN_CHARS) return { ok: false, why: "too short to be worth keeping" };
+    if (line.split(/\s+/).filter(Boolean).length < NOTEBOOK_MIN_WORDS) return { ok: false, why: "not enough to it" };
+    if ((this.notebookPaid.get(who) ?? []).includes(normTitle(line))) return { ok: false, why: "you have been paid for this line before" };
+    // Absent, not zero: someone who has never been paid has no cooldown to be inside of.
+    // Defaulting to 0 only looked right because production clocks are enormous.
+    const last = this.notebookPaidAt.get(who);
+    if (last !== undefined && now - last < NOTEBOOK_PAY_GAP_MS)
+      return { ok: false, why: `too soon after your last paid line (${Math.ceil((NOTEBOOK_PAY_GAP_MS - (now - last)) / 60_000)} min)` };
+    return { ok: true };
+  }
+
+  /** Record that a line was paid for, so it can never be paid for again. */
+  recordNotebookPay(who: string, note: string, now = Date.now()) {
+    const kept = [...(this.notebookPaid.get(who) ?? []), normTitle(note.trim().slice(0, 160))].slice(-80);
+    this.notebookPaid.set(who, kept);
+    this.notebookPaidAt.set(who, now);
+    return kept;
   }
 
   /** Write a line into someone's notebook, oldest-out at the cap. Returns what was kept. */

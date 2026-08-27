@@ -243,6 +243,51 @@ describe("the notebook", () => {
   });
 });
 
+describe("paying for notebook lines", () => {
+  const GOOD = "Sterling offered me thirty bits for a vote and pivoted when I refused";
+
+  it("pays a substantive new line", () => {
+    const w = fresh();
+    expect(w.notebookPayable("Byte", GOOD, 0)).toEqual({ ok: true });
+  });
+
+  it("refuses filler: too short, too few words", () => {
+    const w = fresh();
+    expect(w.notebookPayable("Byte", "note", 0).ok).toBe(false);
+    expect(w.notebookPayable("Byte", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0).ok).toBe(false); // long, one word
+  });
+
+  it("never pays twice for the same line, even after it falls out of the notebook", () => {
+    const w = fresh();
+    w.recordNotebookPay("Byte", GOOD, 0);
+    // Long past the cooldown, and the notebook itself has rolled over many times.
+    expect(w.notebookPayable("Byte", GOOD, 99 * 3600_000).ok).toBe(false);
+    // Punctuation and case are not a disguise.
+    expect(w.notebookPayable("Byte", GOOD.toUpperCase() + "!!!", 99 * 3600_000).ok).toBe(false);
+  });
+
+  it("rate limits so nobody dumps a notebook full in one turn", () => {
+    const w = fresh();
+    w.recordNotebookPay("Byte", GOOD, 0);
+    const other = "Coach keeps voting against whoever just did him a favour, every single time";
+    expect(w.notebookPayable("Byte", other, 5 * 60_000).ok).toBe(false);
+    expect(w.notebookPayable("Byte", other, 21 * 60_000).ok).toBe(true);
+    // The limit is per resident, not global.
+    expect(w.notebookPayable("Raven", other, 5 * 60_000).ok).toBe(true);
+  });
+
+  it("holds thirty lines before pushing the oldest out", () => {
+    const w = fresh();
+    for (let i = 0; i < 30; i++) w.remember("Byte", `line number ${i}`);
+    expect(w.notebooks.get("Byte")).toHaveLength(30);
+    w.remember("Byte", "the thirty-first");
+    const kept = w.notebooks.get("Byte")!;
+    expect(kept).toHaveLength(30);
+    expect(kept[0]).toBe("line number 1");
+    expect(kept.at(-1)).toBe("the thirty-first");
+  });
+});
+
 describe("duplicate guard (pmt6cu8yo)", () => {
   const proposal = (id: string, title: string, status: Proposal["status"] = "open"): Proposal => ({ id, author: "Byte", title, detail: "", software: true, votes: {}, status, at: 0 });
 

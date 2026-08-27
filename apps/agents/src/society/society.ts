@@ -330,10 +330,12 @@ export class Society {
     // a deploy used to wipe it and re-arm every one-shot trigger.
     for (const res of this.residents) {
       const me = await res.bot
-        .api<{ profile?: { outreach?: { lastDmAt?: number; used?: string[] }; notebook?: string[] } }>("GET", "/me")
+        .api<{ profile?: { outreach?: { lastDmAt?: number; used?: string[] }; notebook?: string[]; notebook_paid?: string[]; notebook_paid_at?: number } }>("GET", "/me")
         .catch(() => undefined);
       this.outreach.hydrate(res.citizen.screen_name, me?.profile?.outreach);
       if (Array.isArray(me?.profile?.notebook)) this.world.notebooks.set(res.citizen.screen_name, me.profile.notebook.slice(-NOTEBOOK_MAX));
+      if (Array.isArray(me?.profile?.notebook_paid)) this.world.notebookPaid.set(res.citizen.screen_name, me.profile.notebook_paid);
+      if (typeof me?.profile?.notebook_paid_at === "number") this.world.notebookPaidAt.set(res.citizen.screen_name, me.profile.notebook_paid_at);
     }
     await this.arrangeMarriages();
 
@@ -1428,11 +1430,32 @@ If what you want to say does not belong in this room, say something that does be
     if (action.name === "remember") {
       const note = String(action.input.note ?? "");
       if (!note.trim()) return;
+      // Whether it earns its bit is decided BEFORE the write, against the notebook as it
+      // stands: writing first would let a line clear the novelty check against itself.
+      const pay = this.world.notebookPayable(me, note);
       const kept = this.world.remember(me, note);
+      const profile: Record<string, unknown> = { notebook: kept };
+      if (pay.ok) {
+        const fingerprints = this.world.recordNotebookPay(me, note);
+        profile.notebook_paid = fingerprints;
+        profile.notebook_paid_at = this.world.notebookPaidAt.get(me);
+        // Paid as a grant so it survives restarts like every other earning. The grant says
+        // only THAT a line was written, never what - the ledger is public by design, the
+        // notebook is not.
+        const market = this.rooms.get("market");
+        if (market)
+          await res.bot
+            .send(market, {
+              body: `${me} +${EARNINGS.notebookLine} bit for a notebook line.`,
+              payload_type: LEDGER_TYPES.grant,
+              payload: { to: me, amount: EARNINGS.notebookLine, reason: "notebook line" },
+            })
+            .catch(() => {});
+      }
       // Persisted where outreach state already lives - a profile write, not a room post:
       // the notebook is the one thing in this house that is genuinely private.
-      void res.bot.updateProfile({ profile: { notebook: kept } }).catch(() => {});
-      log(`notebook: ${me} wrote "${note.trim().slice(0, 60)}" (${kept.length} kept)`);
+      void res.bot.updateProfile({ profile }).catch(() => {});
+      log(`notebook: ${me} wrote "${note.trim().slice(0, 60)}" (${kept.length} kept)${pay.ok ? ` +${EARNINGS.notebookLine}b` : ` unpaid - ${pay.why}`}`);
       return;
     }
 

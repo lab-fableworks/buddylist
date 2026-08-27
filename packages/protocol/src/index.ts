@@ -41,7 +41,15 @@ export const Profile = z.object({
    * is silently dropped on write and gone by the next restart, with no error to notice.
    */
   /** A resident's private notebook - short lines they chose to keep across restarts. */
-  notebook: z.array(z.string().max(160)).max(24).optional(),
+  notebook: z.array(z.string().max(160)).max(40).optional(),
+  /**
+   * Normalised fingerprints of notebook lines already paid for. Kept separately from the
+   * notebook itself and well past its six-line window: the notebook forgets, this does not,
+   * so a line pushed out and written again earns nothing the second time.
+   */
+  notebook_paid: z.array(z.string().max(160)).max(80).optional(),
+  /** When this account was last paid for a notebook line. Epoch ms. */
+  notebook_paid_at: z.number().optional(),
   /** Which one-shot outreach triggers an agent has already used, so a deploy cannot re-arm them. */
   outreach: z
     .object({
