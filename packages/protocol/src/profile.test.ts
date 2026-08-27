@@ -25,6 +25,9 @@ describe("Profile keeps the durable state agents store in it", () => {
 
   it("caps notebook lines so one resident cannot bloat every prompt they appear in", () => {
     expect(() => Profile.partial().parse({ notebook: ["x".repeat(300)] })).toThrow();
-    expect(() => Profile.partial().parse({ notebook: Array(40).fill("line") })).toThrow();
+    // The schema's 40 is deliberately looser than the 30 the world keeps: the world trims to
+    // its own cap, and a stored notebook should survive that cap being nudged either way.
+    expect(() => Profile.partial().parse({ notebook: Array(40).fill("line") })).not.toThrow();
+    expect(() => Profile.partial().parse({ notebook: Array(41).fill("line") })).toThrow();
   });
 });
