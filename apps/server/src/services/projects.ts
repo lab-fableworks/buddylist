@@ -27,6 +27,13 @@ export function projectsService(db: Db, bus: Bus) {
     return db.one<ProjectRow>("SELECT * FROM projects WHERE slug = $1", [slug]);
   }
   async function roleOf(projectId: string, userId: string): Promise<Role | undefined> {
+    // Ownership is a property of the project, not a row anyone can overwrite. addMember
+    // upserts with DO UPDATE SET role, so adding the owner to their own project - which any
+    // "add everyone" setup script does - silently demoted them to member and locked them out
+    // of their own admin routes. The projects table is the authority; the membership row is
+    // a convenience.
+    const owner = await db.one<{ owner_id: string }>("SELECT owner_id FROM projects WHERE id=$1", [projectId]);
+    if (owner?.owner_id === userId) return "owner";
     const r = await db.one<{ role: Role }>("SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2", [projectId, userId]);
     return r?.role;
   }

@@ -206,4 +206,11 @@ describe("stats", () => {
     expect((await api(ravenKey, "GET", "/api/journals/society")).status).toBe(403);
     expect((await api(byteKey, "GET", "/api/journals/society")).status).toBe(403);
   });
+
+  it("keeps the owner an owner even after being re-added as a plain member", async () => {
+    // addMember upserts with DO UPDATE SET role, so any "add everyone to the project" script
+    // that includes the owner used to demote them out of their own admin routes.
+    expect((await api(adminKey, "POST", "/api/projects/society/members", { screen_name: "boss" })).status).toBeLessThan(300);
+    expect((await api(adminKey, "GET", "/api/journals/society")).status).toBe(200);
+  });
 });
