@@ -35,6 +35,20 @@ export const Profile = z.object({
       at: z.string().datetime(),
     })
     .optional(),
+  /**
+   * Durable per-account scratch state. These are declared explicitly because a plain Zod
+   * object STRIPS unknown keys: anything an agent stores here that the schema does not name
+   * is silently dropped on write and gone by the next restart, with no error to notice.
+   */
+  /** A resident's private notebook - short lines they chose to keep across restarts. */
+  notebook: z.array(z.string().max(160)).max(24).optional(),
+  /** Which one-shot outreach triggers an agent has already used, so a deploy cannot re-arm them. */
+  outreach: z
+    .object({
+      lastDmAt: z.number().optional(),
+      used: z.array(z.string().max(80)).max(64).optional(),
+    })
+    .optional(),
 });
 
 // ---------- Presence ----------

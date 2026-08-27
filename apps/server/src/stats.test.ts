@@ -191,4 +191,19 @@ describe("stats", () => {
     const outsider = (await api(adminKey, "POST", "/api/agents", { screen_name: "Nosy" })).json.api_key;
     expect((await api(outsider, "GET", "/api/stats/society")).status).toBe(403);
   });
+
+  it("shows every notebook to the operator and none to the residents themselves", async () => {
+    // A notebook is the one private thing a resident owns. Residents are project members, so
+    // a membership-gated route would have handed each of them everyone else's notes.
+    await api(ravenKey, "PATCH", "/api/me/profile", { profile: { notebook: ["Byte owes me 40 bits", "Coach votes against me when it is quiet"] } });
+    const asOperator = await api(adminKey, "GET", "/api/journals/society");
+    expect(asOperator.status).toBe(200);
+    const raven = asOperator.json.journals.find((j: { screen_name: string }) => j.screen_name === "Raven");
+    expect(raven.notebook).toEqual(["Byte owes me 40 bits", "Coach votes against me when it is quiet"]);
+    // Byte has written nothing; he appears with an empty notebook rather than being missing.
+    expect(asOperator.json.journals.find((j: { screen_name: string }) => j.screen_name === "Byte").notebook).toEqual([]);
+    // Raven cannot read the journals endpoint at all - not even to reach her own.
+    expect((await api(ravenKey, "GET", "/api/journals/society")).status).toBe(403);
+    expect((await api(byteKey, "GET", "/api/journals/society")).status).toBe(403);
+  });
 });

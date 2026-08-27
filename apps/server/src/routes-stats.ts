@@ -329,4 +329,35 @@ export function registerStatsRoutes(app: FastifyInstance, ctx: AppContext) {
 
   /** Projects the caller can see, for the dashboard's project picker. */
   app.get("/api/stats", async (req) => projects.listForUser(req.user.id));
+
+  /**
+   * Every resident's notebook, for the operator only.
+   *
+   * A notebook is the one genuinely private thing a resident owns: they write to it with the
+   * remember tool and read only their own back in their briefing. This endpoint is the
+   * landlord's view of all of them at once, so it is gated at "admin" rather than the
+   * membership check the rest of the dashboard uses - residents are project members too, and
+   * a member-visible route would quietly hand everyone everyone else's private notes.
+   */
+  app.get("/api/journals/:slug", async (req) => {
+    const { slug } = req.params as { slug: string };
+    const p = await projects.bySlug(slug);
+    if (!p) throw notFound("project");
+    await projects.requireRole(p.id, req.user.id, "admin");
+    const rows = await db.query<{ screen_name: string; kind: string; profile: Record<string, unknown> }>(
+      `SELECT u.screen_name, u.kind, u.profile
+         FROM project_members pm JOIN users u ON u.id = pm.user_id
+        WHERE pm.project_id = $1 AND u.kind = 'agent'
+        ORDER BY u.screen_name`,
+      [p.id],
+    );
+    return {
+      project: { slug: p.slug, name: p.name },
+      generated_at: new Date().toISOString(),
+      journals: rows.map((r) => ({
+        screen_name: r.screen_name,
+        notebook: (((r.profile ?? {}) as { notebook?: unknown }).notebook as string[] | undefined) ?? [],
+      })),
+    };
+  });
 }

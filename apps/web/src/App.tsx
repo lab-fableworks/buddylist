@@ -256,6 +256,14 @@ function Session({ client, me, onSignOff }: { client: BuddyList; me: { screen_na
       render: () => <LedgerWindow client={client} initial={project} />,
       load: () => client.text(`/projects/${project}/ledger?format=text`),
     },
+    {
+      id: "doc:journals",
+      title: "Journals",
+      icon: "📓",
+      // Operator-only: residents read their own notebook in their briefing and nobody else's.
+      render: () => <JournalsWindow client={client} initial={project} />,
+      load: () => client.api("GET", `/journals/${project}`).then((r) => JSON.stringify(r, null, 2)),
+    },
     { id: "doc:rules", title: "Society Rules", icon: "📜", load: () => roomAsText(client, project, "economics") },
     { id: "doc:registry", title: "Registry", icon: "🗂", load: () => client.api("GET", `/projects/${project}/registry`).then((r) => JSON.stringify(r, null, 2)) },
     { id: "doc:patch", title: "Patch Notes", icon: "🧾", load: () => roomAsText(client, project, "patch-notes") },
@@ -376,6 +384,68 @@ function DocWindow({ load }: { load: () => Promise<string> }) {
       </div>
       {err && <div style={{ color: "#c00" }}>⚠ {err}</div>}
       <pre className="sunken doc-text">{busy && !text ? "Loading…" : (text ?? "")}</pre>
+    </div>
+  );
+}
+
+/**
+ * The journals: every resident's private notebook, side by side, for the operator.
+ *
+ * Residents write these with the remember tool and see only their own line back in their
+ * briefing - this window is the one place all of them are visible at once, which is why the
+ * endpoint behind it is admin-gated rather than member-visible.
+ */
+function JournalsWindow({ client, initial }: { client: BuddyList; initial: string }) {
+  const [projects, setProjects] = useState<Array<{ slug: string; name: string }>>([]);
+  const [slug, setSlug] = useState(initial);
+  const [data, setData] = useState<{ journals: Array<{ screen_name: string; notebook: string[] }> }>();
+  const [err, setErr] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void client
+      .projects()
+      .then((ps) => setProjects(ps as Array<{ slug: string; name: string }>))
+      .catch(() => setProjects([{ slug: initial, name: initial }]));
+  }, [client, initial]);
+  const go = useCallback(() => {
+    setBusy(true);
+    client
+      .api<{ journals: Array<{ screen_name: string; notebook: string[] }> }>("GET", `/journals/${slug}`)
+      .then((r) => (setData(r), setErr(undefined)))
+      .catch((e) => setErr((e as Error).message))
+      .finally(() => setBusy(false));
+  }, [client, slug]);
+  useEffect(() => go(), [go]);
+  const written = data?.journals.filter((j) => j.notebook.length) ?? [];
+  return (
+    <div className="body" style={{ gap: 6 }}>
+      <div className="row" style={{ gap: 6 }}>
+        <select className="field" value={slug} onChange={(e) => setSlug(e.target.value)} style={{ flex: 1 }}>
+          {(projects.length ? projects : [{ slug: initial, name: initial }]).map((p) => (
+            <option key={p.slug} value={p.slug}>{p.name || p.slug}</option>
+          ))}
+        </select>
+        <button className="btn" onClick={go} disabled={busy}>{busy ? "…" : "Refresh"}</button>
+      </div>
+      {err && <div style={{ color: "#c00" }}>⚠ {err}</div>}
+      <div className="sunken doc-text" style={{ overflow: "auto", padding: 6 }}>
+        {busy && !data ? (
+          "Loading…"
+        ) : written.length === 0 ? (
+          <span style={{ color: "#555" }}>Nobody has written anything down yet.</span>
+        ) : (
+          written.map((j) => (
+            <div key={j.screen_name} style={{ marginBottom: 10 }}>
+              <b>{j.screen_name}</b>
+              <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+                {j.notebook.map((n, i) => (
+                  <li key={i} style={{ marginBottom: 2 }}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }
