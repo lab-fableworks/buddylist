@@ -105,6 +105,15 @@ export class Society {
   private apiKey: string;
   private model: string;
 
+  /**
+   * Who can actually still vote or be counted toward quorum: the whole cast until the show
+   * starts evicting people, the active house afterward. The jury watches; it does not vote
+   * on proposals, and a quorum sized for twelve should not survive down to ten.
+   */
+  private electorate(): number {
+    return this.showOn ? this.show.active().length : this.residents.length;
+  }
+
   /** What a message currently costs, from observed spend. */
   private goingRate() {
     if (this.recentRates.length === 0) return 2;
@@ -207,11 +216,9 @@ export class Society {
     const patchNotes = this.rooms.get("patch-notes");
     const commons = this.rooms.get("commons");
     const arena = this.rooms.get("arena");
-    for (const id of [market, proposals, gossip, patchNotes, commons, arena]) {
-      if (id) await replay(host, id, this.world, this.residents.length).catch(() => {});
-    }
-    // The season replays from the same log the world does, so a deploy resumes mid-beat
-    // instead of re-announcing a challenge or forgetting an eviction.
+    // The season replays FIRST, ahead of the rest of the world: quorum depends on who is
+    // still in the house, and a proposal replayed before its evictions are known would be
+    // gated by everyone who ever moved in, not everyone who can actually still vote.
     if (arena) {
       let after = 0;
       let sawShow = false;
@@ -261,6 +268,11 @@ export class Society {
             (this.show.immunity ? `, ${this.show.immunity} immune` : "") +
             (this.show.winner ? `, WINNER ${this.show.winner}` : ""),
         );
+    }
+    // Only now, with every eviction in the log already applied to this.show, does the
+    // electorate reflect who was actually still in the house at each point being replayed.
+    for (const id of [market, proposals, gossip, patchNotes, commons, arena]) {
+      if (id) await replay(host, id, this.world, this.electorate()).catch(() => {});
     }
     log("world restored:", [...this.world.balances].map(([k, v]) => `${k}=${v}`).join(" "));
 
@@ -812,7 +824,7 @@ export class Society {
     const whip = awakeHolder("Whip");
     if (whip && whipDef && Date.now() - (this.dutyAttempt.get("Whip") ?? 0) > whipDef.cadenceHours * 3600_000) {
       const stale = this.world
-        .staleProposals(this.residents.length, STALE_PROPOSAL_HOURS)
+        .staleProposals(this.electorate(), STALE_PROPOSAL_HOURS)
         .filter((p) => Date.now() - (this.whipped.get(p.id) ?? 0) > 6 * 3600_000);
       if (stale.length) {
         for (const p of stale) this.whipped.set(p.id, Date.now());
@@ -1331,7 +1343,7 @@ If what you want to say does not belong in this room, say something that does be
       // repeat can change your mind); it just stops being income.
       const target = this.world.proposals.get(id);
       const fresh = !!target && target.status === "open" && !(me in target.votes);
-      const resolved = this.world.vote(id, me, choice, this.residents.length);
+      const resolved = this.world.vote(id, me, choice, this.electorate());
       if (fresh) this.world.credit(me, EARNINGS.votedq);
       if (resolved?.status === "passed") this.world.credit(resolved.author, EARNINGS.proposalPassed);
       const proposals = room("proposals");
