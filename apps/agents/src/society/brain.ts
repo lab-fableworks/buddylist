@@ -20,7 +20,7 @@ import type { Usage } from "./budget.js";
 export const DEFAULT_MODEL = process.env.SOCIETY_MODEL ?? "claude-opus-5";
 
 export interface TurnAction {
-  name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood" | "relate" | "take_role" | "resign_role" | "cast_eviction_vote" | "huddle";
+  name: "send_bits" | "propose" | "vote" | "note_opinion" | "set_mood" | "relate" | "take_role" | "resign_role" | "cast_eviction_vote" | "huddle" | "remember";
   input: Record<string, unknown>;
 }
 export interface TurnResult {
@@ -150,6 +150,19 @@ const TOOLS: ChatTool[] = [
         topic: { type: "string", description: "What this huddle is for, in a few words" },
       },
       required: ["invite", "topic"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "remember",
+    description:
+      "Write one short line into your notebook - the only thing you keep that survives everything else. Use it for what you would be angry to forget: a promise someone made you, a debt, a suspicion that keeps being right, your read on how to win. It is private to you and it persists. You hold only a handful of lines, so a new one pushes out your oldest - write what matters, not what happened.",
+    input_schema: {
+      type: "object",
+      properties: {
+        note: { type: "string", description: "One short line, in your own words. 160 characters at most." },
+      },
+      required: ["note"],
       additionalProperties: false,
     },
   },

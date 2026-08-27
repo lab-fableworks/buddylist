@@ -14,7 +14,7 @@ import { CITIZENS, ROOM_PURPOSE, SOCIETY_ROOMS, type Citizen } from "./citizens.
 import { Brain, DEFAULT_MODEL, type TurnAction, type TurnResult } from "./brain.js";
 import { modelFor } from "./providers.js";
 import { Budget, loadRemotePrices } from "./budget.js";
-import { EARNINGS, LEDGER_TYPES, RELATION_KINDS, World, replay, speechCost, type Relationship } from "./world.js";
+import { EARNINGS, LEDGER_TYPES, NOTEBOOK_MAX, RELATION_KINDS, World, replay, speechCost, type Relationship } from "./world.js";
 import { Outreach, outreachConfig } from "./outreach.js";
 import { Rhythms, crowdFactor, hoursOf, traitsOf } from "./rhythm.js";
 import { deNarrate, looksNarrated, narrationShare, promisesProposal, stripSelfPrefix, wordCount } from "./style.js";
@@ -276,6 +276,37 @@ export class Society {
     }
     log("world restored:", [...this.world.balances].map(([k, v]) => `${k}=${v}`).join(" "));
 
+    // Announce resolutions that only happened during replay. World.replay() rebuilds status
+    // silently, so a proposal that crosses quorum in memory - which is exactly what happens
+    // when the electorate shrinks after an eviction - would otherwise sit resolved-but-
+    // invisible: never announced, and never re-resolvable, because a decided proposal takes
+    // no further live votes. The log, not memory, decides whether it was already announced.
+    if (proposals && this.showOn) {
+      const announced = new Set<string>();
+      let rAfter = 0;
+      for (;;) {
+        const page: Message[] = await host.history(proposals, { after: rAfter, limit: 200 }).catch(() => []);
+        if (page.length === 0) break;
+        for (const m of page) {
+          rAfter = Math.max(rAfter, m.seq);
+          if (m.payload_type === LEDGER_TYPES.resolution && m.payload) announced.add(String((m.payload as { id?: string }).id ?? ""));
+        }
+        if (page.length < 200) break;
+      }
+      for (const p of this.world.proposals.values()) {
+        if (p.status === "open" || announced.has(p.id)) continue;
+        await host
+          .send(proposals, {
+            body: `[${p.id}] "${p.title}" is ${p.status.toUpperCase()}. (Quorum fell to ${this.electorate() >= 3 ? Math.max(3, Math.ceil(this.electorate() * 0.6)) : 3} as the house shrank; this one had already cleared it.)`,
+            payload_type: LEDGER_TYPES.resolution,
+            payload: { id: p.id, status: p.status, software: p.software },
+          })
+          .catch(() => {});
+        if (p.status === "passed") this.world.credit(p.author, EARNINGS.proposalPassed);
+        log(`proposal ${p.id} ${p.status} on replay - announced late`);
+      }
+    }
+
     // Anyone in the project who is not a resident is a person the society can talk to.
     try {
       const proj = await host.project(this.project);
@@ -298,8 +329,11 @@ export class Society {
     // What each resident has already said to the human lives on their profile, not in memory:
     // a deploy used to wipe it and re-arm every one-shot trigger.
     for (const res of this.residents) {
-      const me = await res.bot.api<{ profile?: { outreach?: { lastDmAt?: number; used?: string[] } } }>("GET", "/me").catch(() => undefined);
+      const me = await res.bot
+        .api<{ profile?: { outreach?: { lastDmAt?: number; used?: string[] }; notebook?: string[] } }>("GET", "/me")
+        .catch(() => undefined);
       this.outreach.hydrate(res.citizen.screen_name, me?.profile?.outreach);
+      if (Array.isArray(me?.profile?.notebook)) this.world.notebooks.set(res.citizen.screen_name, me.profile.notebook.slice(-NOTEBOOK_MAX));
     }
     await this.arrangeMarriages();
 
@@ -1388,6 +1422,17 @@ If what you want to say does not belong in this room, say something that does be
           .send(gossip, { body: `(${me} now calls ${withWhom} their ${kind} — ${note})`, payload_type: LEDGER_TYPES.relationship, payload: { with: withWhom, kind, note } })
           .catch(() => {});
       log(`relationship: ${me} → ${withWhom}: ${kind} (${note})`);
+      return;
+    }
+
+    if (action.name === "remember") {
+      const note = String(action.input.note ?? "");
+      if (!note.trim()) return;
+      const kept = this.world.remember(me, note);
+      // Persisted where outreach state already lives - a profile write, not a room post:
+      // the notebook is the one thing in this house that is genuinely private.
+      void res.bot.updateProfile({ profile: { notebook: kept } }).catch(() => {});
+      log(`notebook: ${me} wrote "${note.trim().slice(0, 60)}" (${kept.length} kept)`);
       return;
     }
 

@@ -70,6 +70,8 @@ export const speechCost = (usd: number) => Math.max(1, Math.round(usd * BITS_PER
  * back in. The floor is what stops it becoming free speech for the permanently bankrupt: at
  * zero you still cannot afford the floor, and the stipend is what gets you off the mat.
  */
+/** How many lines a resident's notebook holds. It is in every prompt; keep it small. */
+export const NOTEBOOK_MAX = Number(process.env.SOCIETY_NOTEBOOK_MAX ?? 6);
 export const RELIEF_THRESHOLD = Number(process.env.SOCIETY_RELIEF_THRESHOLD ?? 50);
 export const SPEECH_FLOOR = Number(process.env.SOCIETY_SPEECH_FLOOR ?? 1);
 
@@ -119,6 +121,12 @@ export class World {
   tips: Transfer[] = [];
   /** The last thing each resident said, and what it cost them. */
   lastSpeech = new Map<string, SpeechReceipt>();
+  /**
+   * What each resident chose to write down: a few short lines that survive restarts. Kept
+   * deliberately small - it rides in every prompt, so a diary would tax every turn they
+   * take. The oldest note falls off when a new one arrives.
+   */
+  notebooks = new Map<string, string[]>();
   private roleDefs: RoleDef[];
 
   constructor(starting: Array<{ screen_name: string; wealth: number }>, roleDefs: RoleDef[] = []) {
@@ -354,6 +362,20 @@ export class World {
     return out;
   }
 
+  /** Write a line into someone's notebook, oldest-out at the cap. Returns what was kept. */
+  remember(who: string, note: string, cap = NOTEBOOK_MAX): string[] {
+    const line = note.trim().slice(0, 160);
+    if (!line) return this.notebooks.get(who) ?? [];
+    const kept = [...(this.notebooks.get(who) ?? []).filter((n) => n !== line), line].slice(-cap);
+    this.notebooks.set(who, kept);
+    return kept;
+  }
+  forget(who: string, note: string): string[] {
+    const kept = (this.notebooks.get(who) ?? []).filter((n) => n !== note.trim().slice(0, 160));
+    this.notebooks.set(who, kept);
+    return kept;
+  }
+
   opinionOf(who: string, about: string): Opinion | undefined {
     return this.opinions.get(who)?.get(about);
   }
@@ -488,6 +510,10 @@ export class World {
           .join("; ")}.`,
       );
     }
+    const notes = this.notebooks.get(who) ?? [];
+    if (notes.length)
+      lines.push(`Your notebook - things you wrote down and chose to keep:\n${notes.map((n) => `  - ${n}`).join("\n")}`);
+
     // Duty: the job they hold and whether it is due, or the jobs nobody holds.
     const myRole = this.roleOf(who);
     if (myRole) {

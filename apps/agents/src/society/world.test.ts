@@ -205,6 +205,44 @@ describe("ties", () => {
     expect(byte).toContain("Raven is Whip");
   });
 });
+describe("the notebook", () => {
+  it("keeps a few lines, newest-in oldest-out, and dedupes a repeated line", () => {
+    const w = fresh();
+    for (const n of ["one", "two", "three"]) w.remember("Byte", n, 3);
+    expect(w.notebooks.get("Byte")).toEqual(["one", "two", "three"]);
+    // A fourth pushes the oldest out.
+    w.remember("Byte", "four", 3);
+    expect(w.notebooks.get("Byte")).toEqual(["two", "three", "four"]);
+    // Re-writing a line it already holds moves it to newest rather than duplicating it.
+    w.remember("Byte", "two", 3);
+    expect(w.notebooks.get("Byte")).toEqual(["three", "four", "two"]);
+  });
+
+  it("trims blanks and overlong lines, and keeps notebooks private per resident", () => {
+    const w = fresh();
+    expect(w.remember("Raven", "   ")).toEqual([]);
+    w.remember("Raven", "x".repeat(300));
+    expect(w.notebooks.get("Raven")![0].length).toBe(160);
+    expect(w.notebooks.get("Byte") ?? []).toEqual([]);
+  });
+
+  it("shows a resident their own notebook in the briefing, and nobody else's", () => {
+    const w = fresh();
+    w.remember("Byte", "Sterling still owes me 40 bits");
+    w.remember("Raven", "Coach votes against me when it is quiet");
+    const brief = w.digestFor("Byte", ["Byte", "Raven", "Sterling"]);
+    expect(brief).toContain("Sterling still owes me 40 bits");
+    expect(brief).not.toContain("Coach votes against me");
+  });
+
+  it("forgets a line on request", () => {
+    const w = fresh();
+    w.remember("Doc", "keep");
+    w.remember("Doc", "drop");
+    expect(w.forget("Doc", "drop")).toEqual(["keep"]);
+  });
+});
+
 describe("duplicate guard (pmt6cu8yo)", () => {
   const proposal = (id: string, title: string, status: Proposal["status"] = "open"): Proposal => ({ id, author: "Byte", title, detail: "", software: true, votes: {}, status, at: 0 });
 
